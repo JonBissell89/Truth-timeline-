@@ -31,20 +31,51 @@ When you change a past vote, downstream decisions get invalidated—**unless** a
 
 Your yes/no votes determine which branch you're on. Others might be on different branches—their reality, not yours.
 
+## Quick Start
+
+```bash
+# Run the interactive CLI
+python3 src/cli.py
+
+# Or with a specific user ID
+python3 src/cli.py alice
+```
+
+**No dependencies needed!** Uses Python 3.7+ standard library and SQLite.
+
+**[→ Full usage guide](USAGE.md)**
+
 ## Documentation
 
-**[Read the full conceptual foundation →](CONCEPT.md)**
+**[→ Conceptual foundation](CONCEPT.md)** - Deep dive into philosophy and mechanics
+**[→ Usage guide](USAGE.md)** - Getting started and walkthrough
+**[→ Data model](DATA_MODEL.md)** - Database schema and scalability
 
-Deep dive into:
+Key concepts:
 - Personal reality construction
 - The ontological bootstrap problem
 - Timeline invalidation & path redundancy
-- 3D bubble visualization mechanics
+- 3D bubble visualization (coming soon)
 - Historical truth & future data integration
 
 ## Status
 
-Early conceptual phase - defining the philosophical and technical foundation.
+**✅ MVP Complete** - Working CLI with SQLite database
+
+Features implemented:
+- Define terms through yes/no questions
+- Vote on personal and community definitions
+- AI-powered suggestion engine
+- Timeline tracking and visualization
+- Orphaned node detection
+- Scalable data model (SQLite → PostgreSQL path)
+
+Coming soon:
+- 3D bubble visualization
+- Web interface
+- Real-world historical data import
+- Advanced AI suggestions (LLM integration)
+- Project spaces for complex topics
 
 ---
 
