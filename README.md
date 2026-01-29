@@ -33,6 +33,24 @@ Your yes/no votes determine which branch you're on. Others might be on different
 
 ## Quick Start
 
+### 📱 Web Version (Recommended for Phone)
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run web server
+./run.sh
+
+# Access at http://localhost:8000
+```
+
+**Deploy to the web**: See **[DEPLOYMENT.md](DEPLOYMENT.md)** for Railway, Replit, Render, etc.
+
+**Perfect for mobile**: Responsive design, add to home screen for app-like experience!
+
+### 💻 CLI Version
+
 ```bash
 # Run the interactive CLI
 python3 src/cli.py
@@ -47,8 +65,9 @@ python3 src/cli.py alice
 
 ## Documentation
 
+**[→ Deployment guide](DEPLOYMENT.md)** - Deploy to Railway, Replit, Render (for phone access!)
 **[→ Conceptual foundation](CONCEPT.md)** - Deep dive into philosophy and mechanics
-**[→ Usage guide](USAGE.md)** - Getting started and walkthrough
+**[→ Usage guide](USAGE.md)** - CLI getting started and walkthrough
 **[→ Data model](DATA_MODEL.md)** - Database schema and scalability
 
 Key concepts:
@@ -60,22 +79,25 @@ Key concepts:
 
 ## Status
 
-**✅ MVP Complete** - Working CLI with SQLite database
+**✅ Web App Complete** - Mobile-friendly interface + CLI
 
 Features implemented:
-- Define terms through yes/no questions
-- Vote on personal and community definitions
-- AI-powered suggestion engine
-- Timeline tracking and visualization
-- Orphaned node detection
-- Scalable data model (SQLite → PostgreSQL path)
+- 📱 **Mobile-first web interface** (works on any phone browser)
+- 💻 **Command-line interface** (for local/offline use)
+- ✅ Define terms through yes/no questions
+- ✅ Vote on personal and community definitions
+- 🤖 AI-powered suggestion engine
+- 📜 Timeline tracking and visualization
+- ⚠️ Orphaned node detection
+- 📊 Scalable data model (SQLite → PostgreSQL path)
+- 🎨 Dark theme, touch-optimized UI
+- 🚀 Deploy-ready (Railway, Replit, Render, etc.)
 
 Coming soon:
-- 3D bubble visualization
-- Web interface
-- Real-world historical data import
-- Advanced AI suggestions (LLM integration)
-- Project spaces for complex topics
+- 🌌 3D bubble visualization
+- 📥 Real-world historical data import
+- 🧠 Advanced AI suggestions (LLM integration)
+- 📁 Project spaces for complex topics
 
 ---
 
