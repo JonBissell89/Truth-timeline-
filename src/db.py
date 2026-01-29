@@ -12,6 +12,7 @@ Simple SQLite wrapper with functions for:
 import sqlite3
 import json
 import uuid
+import os
 from typing import List, Dict, Optional, Set
 from datetime import datetime
 
@@ -22,6 +23,12 @@ class TimelineDB:
     def __init__(self, db_path: str = "data/timeline.db"):
         """Initialize database connection and create schema if needed."""
         self.db_path = db_path
+
+        # Create directory if it doesn't exist
+        db_dir = os.path.dirname(db_path)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir)
+
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row  # Access columns by name
         self._create_schema()
