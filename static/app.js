@@ -143,14 +143,102 @@ function displaySearchResults(results, term) {
     container.innerHTML = html;
 }
 
+// Word Classification
+function getTierBadge(tier) {
+    const icons = {
+        'primitive': '🔵',
+        'functional': '⚪',
+        'concrete': '🟢',
+        'derived': '🟡',
+        'subjective': '🔴'
+    };
+
+    const labels = {
+        'primitive': 'Primitive',
+        'functional': 'Functional',
+        'concrete': 'Concrete',
+        'derived': 'Derived',
+        'subjective': 'Subjective'
+    };
+
+    return `
+        <span class="tier-badge tier-${tier}">
+            <span class="tier-badge-icon">${icons[tier] || '⚪'}</span>
+            ${labels[tier] || tier}
+        </span>
+    `;
+}
+
+async function classifyWord(word) {
+    try {
+        const response = await fetch(`/api/words/classify/${encodeURIComponent(word)}`);
+        return await response.json();
+    } catch (error) {
+        console.error('Error classifying word:', error);
+        return { tier: 'derived', type: 'unknown', needs_definition: true };
+    }
+}
+
+async function checkCircular(term, question) {
+    try {
+        const response = await fetch('/api/words/check-circular', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ term, question })
+        });
+        return await response.json();
+    } catch (error) {
+        console.error('Error checking circular:', error);
+        return { is_circular: false };
+    }
+}
+
 // Create Definition
 async function showCreateModal(term) {
     currentTerm = term;
     document.getElementById('create-term').textContent = term;
 
-    // Get AI suggestions
     showLoading(true);
+
     try {
+        // Classify the word first
+        const classification = await classifyWord(term);
+
+        // Show tier information
+        let tierInfo = '';
+        if (classification.tier === 'primitive') {
+            tierInfo = `
+                <div class="info-box" style="margin-bottom: 1rem;">
+                    ${getTierBadge('primitive')}
+                    <p style="margin-top: 0.5rem; color: var(--text-dim);">
+                        This is a <strong>primitive</strong> term - a foundational concept that cannot be broken down further.
+                        Most people understand "${term}" through direct experience.
+                    </p>
+                </div>
+            `;
+        } else if (classification.tier === 'subjective') {
+            tierInfo = `
+                <div class="info-box" style="margin-bottom: 1rem; border-color: var(--danger);">
+                    ${getTierBadge('subjective')}
+                    <p style="margin-top: 0.5rem; color: var(--text-dim);">
+                        This is a <strong>subjective</strong> term - it means different things to different people.
+                        Your definition will be personal to your timeline.
+                    </p>
+                </div>
+            `;
+        } else if (classification.tier === 'derived') {
+            tierInfo = `
+                <div class="info-box" style="margin-bottom: 1rem;">
+                    ${getTierBadge('derived')}
+                    <p style="margin-top: 0.5rem; color: var(--text-dim);">
+                        This is a <strong>derived</strong> term - try to break it down into simpler words.
+                        Best definitions use foundational primitives.
+                    </p>
+                </div>
+            `;
+        }
+
+        // Get AI suggestions
         const response = await fetch('/api/ai/suggest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -158,9 +246,22 @@ async function showCreateModal(term) {
         });
 
         const data = await response.json();
+
+        // Update modal with tier info
+        const modalContent = document.querySelector('#create-modal .modal-content');
+        const existingTierInfo = modalContent.querySelector('.tier-info');
+        if (existingTierInfo) {
+            existingTierInfo.remove();
+        }
+
+        const h3 = modalContent.querySelector('h3');
+        if (tierInfo) {
+            h3.insertAdjacentHTML('afterend', `<div class="tier-info">${tierInfo}</div>`);
+        }
+
         displayAISuggestions(data.suggestions);
     } catch (error) {
-        console.error('Error getting AI suggestions:', error);
+        console.error('Error in showCreateModal:', error);
     } finally {
         showLoading(false);
     }
@@ -205,6 +306,15 @@ async function createDefinition(question) {
     showLoading(true);
 
     try {
+        // Check for circular definition
+        const circularCheck = await checkCircular(currentTerm, question);
+
+        if (circularCheck.is_circular) {
+            showLoading(false);
+            showToast(`⚠️ Circular definition detected: ${circularCheck.reason}`, 'error');
+            return;
+        }
+
         // Create node
         const response = await fetch('/api/nodes', {
             method: 'POST',

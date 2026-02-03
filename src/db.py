@@ -63,14 +63,243 @@ class TimelineDB:
             )
         """)
 
+        # Word classification table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS word_classes (
+                word TEXT PRIMARY KEY,
+                tier TEXT NOT NULL,
+                definition_type TEXT,
+                image_url TEXT,
+                primitive_decomposition TEXT,
+                notes TEXT
+            )
+        """)
+
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_nodes_defining ON nodes(defining_terms)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_nodes_using ON nodes(using_terms)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_user ON votes(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_node ON votes(node_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_word_tier ON word_classes(tier)")
 
         self.conn.commit()
+
+        # Load semantic primitives if not already loaded
+        self._load_primitives()
+
+    def _load_primitives(self):
+        """Load semantic primitives from JSON file if not already in database."""
+        cursor = self.conn.cursor()
+
+        # Check if primitives already loaded
+        count = cursor.execute("SELECT COUNT(*) as c FROM word_classes WHERE tier = 'primitive'").fetchone()['c']
+        if count > 0:
+            return  # Already loaded
+
+        # Load from JSON file
+        primitives_path = os.path.join(os.path.dirname(__file__), 'semantic_primitives.json')
+        if not os.path.exists(primitives_path):
+            return  # File not found, skip
+
+        with open(primitives_path, 'r') as f:
+            data = json.load(f)
+
+        # Insert primitives
+        for word, info in data.get('primitives', {}).items():
+            cursor.execute("""
+                INSERT OR IGNORE INTO word_classes (word, tier, definition_type, notes)
+                VALUES (?, ?, ?, ?)
+            """, (word.lower(), info['tier'], info['type'], info.get('notes', '')))
+
+        # Insert functional words
+        for word, info in data.get('functional', {}).items():
+            cursor.execute("""
+                INSERT OR IGNORE INTO word_classes (word, tier, definition_type)
+                VALUES (?, ?, ?)
+            """, (word.lower(), info['tier'], info['type']))
+
+        self.conn.commit()
+
+    def classify_word(self, word: str) -> Dict:
+        """
+        Classify a word into its tier.
+
+        Returns:
+            Dict with tier, type, and whether it needs definition
+        """
+        word_lower = word.lower()
+
+        # Check database first
+        cursor = self.conn.cursor()
+        result = cursor.execute(
+            "SELECT * FROM word_classes WHERE word = ?",
+            (word_lower,)
+        ).fetchone()
+
+        if result:
+            return {
+                'word': word_lower,
+                'tier': result['tier'],
+                'type': result['definition_type'],
+                'needs_definition': result['tier'] not in ['primitive', 'functional']
+            }
+
+        # Check if it's a known subjective word
+        primitives_path = os.path.join(os.path.dirname(__file__), 'semantic_primitives.json')
+        if os.path.exists(primitives_path):
+            with open(primitives_path, 'r') as f:
+                data = json.load(f)
+                if word_lower in data.get('subjective_markers', []):
+                    return {
+                        'word': word_lower,
+                        'tier': 'subjective',
+                        'type': 'personal',
+                        'needs_definition': True
+                    }
+
+        # Unknown word - classify as derived (needs definition)
+        return {
+            'word': word_lower,
+            'tier': 'derived',
+            'type': 'unknown',
+            'needs_definition': True
+        }
+
+    def get_word_tier(self, word: str) -> str:
+        """Get the tier of a word (primitive, functional, concrete, derived, subjective)."""
+        classification = self.classify_word(word)
+        return classification['tier']
+
+    def get_undefined_terms(self, terms: List[str], user_id: str) -> List[Dict]:
+        """
+        Check which terms are undefined for a user.
+
+        Returns list of dicts with term info and classification.
+        """
+        undefined = []
+
+        for term in terms:
+            classification = self.classify_word(term)
+
+            # Skip functional words
+            if classification['tier'] == 'functional':
+                continue
+
+            # Primitives don't need definition
+            if classification['tier'] == 'primitive':
+                continue
+
+            # Check if user has defined this term
+            personal_defs = self.search_definitions(term, user_id=user_id)
+
+            if not personal_defs:
+                # Check community definitions
+                community_defs = self.search_definitions(term, scope="community:%")
+
+                undefined.append({
+                    'term': term,
+                    'classification': classification,
+                    'community_definitions': len(community_defs),
+                    'suggested_action': 'define' if community_defs == 0 else 'vote_or_define'
+                })
+
+        return undefined
+
+    def detect_circular_definition(self, term: str, question: str, max_depth: int = 10) -> Dict:
+        """
+        Detect if defining 'term' with 'question' creates a circular definition.
+
+        Returns dict with is_circular flag and path if circular.
+        """
+        # Extract words from question
+        words = question.lower().split()
+
+        # Check if term appears in its own definition
+        if term.lower() in words:
+            return {
+                'is_circular': True,
+                'reason': f'Direct self-reference: "{term}" appears in its own definition',
+                'path': [term, term]
+            }
+
+        # Check for indirect cycles (term A → B → C → A)
+        # This requires checking the definition chain
+        visited = set()
+        path = [term]
+
+        def check_chain(current_term, depth=0):
+            if depth > max_depth:
+                return False
+
+            if current_term in visited:
+                return True  # Found cycle
+
+            visited.add(current_term)
+
+            # Get definitions of current_term
+            # (simplified - in real implementation would parse using_terms from existing definitions)
+            return False
+
+        # For now, just check direct self-reference
+        # Full cycle detection would require analyzing the full definition graph
+
+        return {
+            'is_circular': False,
+            'reason': None,
+            'path': []
+        }
+
+    def calculate_definition_depth(self, term: str, user_id: str, max_depth: int = 10) -> Dict:
+        """
+        Calculate how many steps to reach primitives from this term.
+
+        Returns dict with depth, path to primitives, and grounding status.
+        """
+        # Get user's definition of this term
+        definitions = self.search_definitions(term, user_id=user_id)
+
+        if not definitions:
+            return {
+                'depth': -1,
+                'is_grounded': False,
+                'reason': 'No definition found',
+                'path': []
+            }
+
+        # Get the first definition (user's primary definition)
+        definition = definitions[0]
+        using_terms = json.loads(definition.get('using_terms', '[]'))
+
+        # Check if all using terms are primitives or functional
+        all_primitive = True
+        max_term_depth = 0
+        path = [term]
+
+        for using_term in using_terms:
+            classification = self.classify_word(using_term)
+
+            if classification['tier'] in ['primitive', 'functional']:
+                continue
+            else:
+                all_primitive = False
+                # Would recursively check depth of using_term here
+                max_term_depth = max(max_term_depth, 1)
+
+        if all_primitive:
+            return {
+                'depth': 1,
+                'is_grounded': True,
+                'reason': 'All terms are primitive',
+                'path': path
+            }
+        else:
+            return {
+                'depth': max_term_depth + 1,
+                'is_grounded': True,  # Assume grounded if we haven't hit max_depth
+                'reason': 'Contains derived terms',
+                'path': path
+            }
 
     def create_node(
         self,

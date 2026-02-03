@@ -1,0 +1,115 @@
+{
+  "primitives": {
+    "I": {"tier": "primitive", "type": "experience", "notes": "Self-awareness, first-person perspective"},
+    "you": {"tier": "primitive", "type": "experience", "notes": "Second-person, other consciousness"},
+    "someone": {"tier": "primitive", "type": "experience", "notes": "Third-person, unspecified person"},
+    "people": {"tier": "primitive", "type": "experience", "notes": "Multiple persons"},
+    "something": {"tier": "primitive", "type": "experience", "notes": "Unspecified thing"},
+    "body": {"tier": "primitive", "type": "experience", "notes": "Physical form"},
+
+    "kind": {"tier": "primitive", "type": "taxonomy", "notes": "Category, type of thing"},
+    "part": {"tier": "primitive", "type": "taxonomy", "notes": "Component, piece of whole"},
+
+    "this": {"tier": "primitive", "type": "ostensive", "notes": "Proximal demonstrative"},
+    "same": {"tier": "primitive", "type": "relation", "notes": "Identical, not different"},
+    "other": {"tier": "primitive", "type": "relation", "notes": "Different, alternative"},
+    "else": {"tier": "primitive", "type": "relation", "notes": "Alternative, different option"},
+
+    "one": {"tier": "primitive", "type": "quantity", "notes": "Single unit"},
+    "two": {"tier": "primitive", "type": "quantity", "notes": "Pair"},
+    "some": {"tier": "primitive", "type": "quantity", "notes": "Indefinite amount"},
+    "all": {"tier": "primitive", "type": "quantity", "notes": "Every, complete set"},
+    "many": {"tier": "primitive", "type": "quantity", "notes": "Large quantity"},
+    "much": {"tier": "primitive", "type": "quantity", "notes": "Large amount"},
+    "few": {"tier": "primitive", "type": "quantity", "notes": "Small quantity"},
+    "more": {"tier": "primitive", "type": "quantity", "notes": "Greater amount"},
+
+    "good": {"tier": "primitive", "type": "evaluation", "notes": "Positive value"},
+    "bad": {"tier": "primitive", "type": "evaluation", "notes": "Negative value"},
+
+    "big": {"tier": "primitive", "type": "property", "notes": "Large size"},
+    "small": {"tier": "primitive", "type": "property", "notes": "Little size"},
+
+    "think": {"tier": "primitive", "type": "mental", "notes": "Mental activity, cognition"},
+    "know": {"tier": "primitive", "type": "mental", "notes": "Awareness of truth"},
+    "want": {"tier": "primitive", "type": "mental", "notes": "Desire, intention"},
+    "feel": {"tier": "primitive", "type": "mental", "notes": "Experience sensation/emotion"},
+    "see": {"tier": "primitive", "type": "mental", "notes": "Visual perception"},
+    "hear": {"tier": "primitive", "type": "mental", "notes": "Auditory perception"},
+
+    "say": {"tier": "primitive", "type": "communication", "notes": "Speak, express in words"},
+    "word": {"tier": "primitive", "type": "communication", "notes": "Unit of language"},
+    "true": {"tier": "primitive", "type": "communication", "notes": "Corresponds to reality"},
+
+    "do": {"tier": "primitive", "type": "action", "notes": "Perform action"},
+    "happen": {"tier": "primitive", "type": "action", "notes": "Occur, take place"},
+    "move": {"tier": "primitive", "type": "action", "notes": "Change position"},
+    "touch": {"tier": "primitive", "type": "action", "notes": "Physical contact"},
+    "live": {"tier": "primitive", "type": "action", "notes": "Be alive, exist"},
+    "die": {"tier": "primitive", "type": "action", "notes": "Cease to live"},
+
+    "when": {"tier": "primitive", "type": "time", "notes": "Temporal question"},
+    "now": {"tier": "primitive", "type": "time", "notes": "Present moment"},
+    "before": {"tier": "primitive", "type": "time", "notes": "Earlier in time"},
+    "after": {"tier": "primitive", "type": "time", "notes": "Later in time"},
+    "time": {"tier": "primitive", "type": "time", "notes": "Duration, temporal dimension"},
+
+    "where": {"tier": "primitive", "type": "space", "notes": "Spatial question"},
+    "here": {"tier": "primitive", "type": "space", "notes": "This location"},
+    "above": {"tier": "primitive", "type": "space", "notes": "Higher position"},
+    "below": {"tier": "primitive", "type": "space", "notes": "Lower position"},
+    "far": {"tier": "primitive", "type": "space", "notes": "Distant"},
+    "near": {"tier": "primitive", "type": "space", "notes": "Close"},
+    "side": {"tier": "primitive", "type": "space", "notes": "Lateral position"},
+    "inside": {"tier": "primitive", "type": "space", "notes": "Interior"},
+    "place": {"tier": "primitive", "type": "space", "notes": "Location"},
+
+    "not": {"tier": "primitive", "type": "logic", "notes": "Negation"},
+    "maybe": {"tier": "primitive", "type": "logic", "notes": "Possibility"},
+    "can": {"tier": "primitive", "type": "logic", "notes": "Ability, possibility"},
+    "because": {"tier": "primitive", "type": "logic", "notes": "Causation"},
+    "if": {"tier": "primitive", "type": "logic", "notes": "Conditional"},
+
+    "very": {"tier": "primitive", "type": "intensifier", "notes": "High degree"},
+    "like": {"tier": "primitive", "type": "comparison", "notes": "Similar to"},
+
+    "exist": {"tier": "primitive", "type": "existence", "notes": "Have being, be real"},
+    "there": {"tier": "primitive", "type": "existence", "notes": "At that place, exists"},
+    "have": {"tier": "primitive", "type": "possession", "notes": "Possess, own"},
+
+    "am": {"tier": "primitive", "type": "existence", "notes": "First-person be"},
+    "is": {"tier": "primitive", "type": "existence", "notes": "Third-person be"},
+    "are": {"tier": "primitive", "type": "existence", "notes": "Second/plural be"}
+  },
+
+  "functional": {
+    "the": {"tier": "functional", "type": "article"},
+    "a": {"tier": "functional", "type": "article"},
+    "an": {"tier": "functional", "type": "article"},
+    "and": {"tier": "functional", "type": "conjunction"},
+    "or": {"tier": "functional", "type": "conjunction"},
+    "but": {"tier": "functional", "type": "conjunction"},
+    "so": {"tier": "functional", "type": "conjunction"},
+    "at": {"tier": "functional", "type": "preposition"},
+    "in": {"tier": "functional", "type": "preposition"},
+    "on": {"tier": "functional", "type": "preposition"},
+    "by": {"tier": "functional", "type": "preposition"},
+    "with": {"tier": "functional", "type": "preposition"},
+    "from": {"tier": "functional", "type": "preposition"},
+    "to": {"tier": "functional", "type": "preposition"},
+    "of": {"tier": "functional", "type": "preposition"},
+    "for": {"tier": "functional", "type": "preposition"},
+    "it": {"tier": "functional", "type": "pronoun"},
+    "that": {"tier": "functional", "type": "pronoun"},
+    "which": {"tier": "functional", "type": "pronoun"},
+    "as": {"tier": "functional", "type": "preposition"}
+  },
+
+  "subjective_markers": [
+    "fun", "nice", "beautiful", "ugly", "interesting", "boring",
+    "cool", "awesome", "great", "terrible", "amazing", "horrible",
+    "love", "hate", "like", "dislike", "prefer", "favorite",
+    "best", "worst", "better", "worse", "perfect", "awful",
+    "handsome", "pretty", "attractive", "meaningful", "important"
+  ]
+}

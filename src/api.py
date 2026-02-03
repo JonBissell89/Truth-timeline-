@@ -193,6 +193,64 @@ async def get_stats():
     }
 
 
+@app.get("/api/words/classify/{word}")
+async def classify_word(word: str):
+    """Classify a word into its tier."""
+    classification = db.classify_word(word)
+    return classification
+
+
+@app.get("/api/words/tier/{word}")
+async def get_word_tier(word: str):
+    """Get the tier of a word."""
+    tier = db.get_word_tier(word)
+    return {"word": word, "tier": tier}
+
+
+@app.post("/api/words/check-undefined")
+async def check_undefined(request: dict):
+    """Check which terms in a list are undefined for a user."""
+    terms = request.get('terms', [])
+    user_id = request.get('user_id')
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+
+    undefined = db.get_undefined_terms(terms, user_id)
+    return {"undefined": undefined}
+
+
+@app.post("/api/words/check-circular")
+async def check_circular(request: dict):
+    """Check if a definition would be circular."""
+    term = request.get('term')
+    question = request.get('question')
+
+    if not term or not question:
+        raise HTTPException(status_code=400, detail="term and question are required")
+
+    result = db.detect_circular_definition(term, question)
+    return result
+
+
+@app.get("/api/words/depth/{term}/{user_id}")
+async def get_definition_depth(term: str, user_id: str):
+    """Get the definition depth for a term."""
+    depth_info = db.calculate_definition_depth(term, user_id)
+    return depth_info
+
+
+@app.get("/api/words/primitives")
+async def get_primitives():
+    """Get all semantic primitives."""
+    cursor = db.conn.cursor()
+    primitives = cursor.execute(
+        "SELECT * FROM word_classes WHERE tier = 'primitive' ORDER BY word"
+    ).fetchall()
+
+    return {"primitives": [dict(p) for p in primitives]}
+
+
 @app.get("/api/health")
 async def health():
     """Health check endpoint."""
