@@ -5,10 +5,21 @@ let currentUser = null;
 let currentNodeId = null;
 let currentTerm = null;
 
+// Safe localStorage helpers (blocked in some iframe contexts)
+function storageGet(key) {
+    try { return localStorage.getItem(key); } catch(e) { return null; }
+}
+function storageSet(key, value) {
+    try { localStorage.setItem(key, value); } catch(e) {}
+}
+function storageRemove(key) {
+    try { localStorage.removeItem(key); } catch(e) {}
+}
+
 // Initialize app on load
 document.addEventListener('DOMContentLoaded', () => {
     // Check for saved user
-    const savedUser = localStorage.getItem('truthTimelineUser');
+    const savedUser = storageGet('truthTimelineUser');
     if (savedUser) {
         currentUser = savedUser;
         showAppScreen();
@@ -26,13 +37,13 @@ function login() {
     }
 
     currentUser = username;
-    localStorage.setItem('truthTimelineUser', username);
+    storageSet('truthTimelineUser', username);
     showAppScreen();
 }
 
 function logout() {
     currentUser = null;
-    localStorage.removeItem('truthTimelineUser');
+    storageRemove('truthTimelineUser');
     document.getElementById('login-screen').classList.add('active');
     document.getElementById('app-screen').classList.remove('active');
 }
