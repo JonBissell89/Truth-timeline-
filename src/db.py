@@ -1,15 +1,10 @@
 """
 Database layer for Truth Timeline.
 
-Simple SQLite wrapper with functions for:
-- Creating nodes (questions/definitions)
-- Voting on nodes
-- Searching for term definitions
-- Getting user timelines
-- Calculating timeline validity
+Supports both SQLite (local dev) and PostgreSQL (production).
+Auto-detects from DATABASE_URL environment variable.
 """
 
-import sqlite3
 import json
 import uuid
 import os
@@ -17,28 +12,82 @@ from typing import List, Dict, Optional, Set
 from datetime import datetime
 
 
+def _get_database_url():
+    return os.environ.get("DATABASE_URL", "sqlite:///data/timeline.db")
+
+
+def _is_postgres(url: str) -> bool:
+    return url.startswith("postgresql://") or url.startswith("postgres://")
+
+
 class TimelineDB:
-    """SQLite database for Truth Timeline."""
+    """
+    Database for Truth Timeline.
+    Auto-selects SQLite or PostgreSQL based on DATABASE_URL env var.
+    """
 
-    def __init__(self, db_path: str = "data/timeline.db"):
-        """Initialize database connection and create schema if needed."""
-        self.db_path = db_path
-
-        # Create directory if it doesn't exist
-        db_dir = os.path.dirname(db_path)
-        if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir)
-
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row  # Access columns by name
+    def __init__(self):
+        self.database_url = _get_database_url()
+        self.pg = _is_postgres(self.database_url)
+        self.conn = self._connect()
         self._create_schema()
+
+    def _connect(self):
+        if self.pg:
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(self.database_url)
+            conn.autocommit = False
+            return conn
+        else:
+            import sqlite3
+            # Strip sqlite:/// prefix
+            db_path = self.database_url.replace("sqlite:///", "")
+            db_dir = os.path.dirname(db_path)
+            if db_dir and not os.path.exists(db_dir):
+                os.makedirs(db_dir)
+            conn = sqlite3.connect(db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            return conn
+
+    def _cursor(self):
+        """Return a cursor, auto-reconnecting if needed (PostgreSQL)."""
+        if self.pg:
+            import psycopg2
+            import psycopg2.extras
+            try:
+                if self.conn.closed:
+                    self.conn = self._connect()
+                cur = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            except Exception:
+                self.conn = self._connect()
+                cur = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            return cur
+        else:
+            return self.conn.cursor()
+
+    def _commit(self):
+        if not self.pg or not self.conn.autocommit:
+            self.conn.commit()
+
+    def _ph(self) -> str:
+        """Return the placeholder character for this database."""
+        return "%s" if self.pg else "?"
+
+    def _fetchone(self, cursor) -> Optional[Dict]:
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def _fetchall(self, cursor) -> List[Dict]:
+        return [dict(row) for row in cursor.fetchall()]
 
     def _create_schema(self):
         """Create tables and indexes if they don't exist."""
-        cursor = self.conn.cursor()
+        cur = self._cursor()
 
-        # Nodes table
-        cursor.execute("""
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS nodes (
                 id TEXT PRIMARY KEY,
                 question TEXT NOT NULL,
@@ -47,24 +96,21 @@ class TimelineDB:
                 parents TEXT,
                 scope TEXT NOT NULL,
                 created_by TEXT NOT NULL,
-                created_at INTEGER NOT NULL
+                created_at BIGINT NOT NULL
             )
         """)
 
-        # Votes table
-        cursor.execute("""
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS votes (
                 node_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
                 vote TEXT NOT NULL,
-                voted_at INTEGER NOT NULL,
-                PRIMARY KEY (node_id, user_id),
-                FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+                voted_at BIGINT NOT NULL,
+                PRIMARY KEY (node_id, user_id)
             )
         """)
 
-        # Word classification table
-        cursor.execute("""
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS word_classes (
                 word TEXT PRIMARY KEY,
                 tier TEXT NOT NULL,
@@ -75,231 +121,130 @@ class TimelineDB:
             )
         """)
 
-        # Indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_nodes_defining ON nodes(defining_terms)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_nodes_using ON nodes(using_terms)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_user ON votes(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_votes_node ON votes(node_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_word_tier ON word_classes(tier)")
+        # Indexes (IF NOT EXISTS supported in both)
+        for idx_sql in [
+            "CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope)",
+            "CREATE INDEX IF NOT EXISTS idx_nodes_defining ON nodes(defining_terms)",
+            "CREATE INDEX IF NOT EXISTS idx_votes_user ON votes(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_votes_node ON votes(node_id)",
+            "CREATE INDEX IF NOT EXISTS idx_word_tier ON word_classes(tier)",
+        ]:
+            cur.execute(idx_sql)
 
-        self.conn.commit()
-
-        # Load semantic primitives if not already loaded
+        self._commit()
         self._load_primitives()
 
     def _load_primitives(self):
-        """Load semantic primitives from JSON file if not already in database."""
-        cursor = self.conn.cursor()
+        """Load semantic primitives from JSON file if not already loaded."""
+        ph = self._ph()
+        cur = self._cursor()
 
-        # Check if primitives already loaded
-        count = cursor.execute("SELECT COUNT(*) as c FROM word_classes WHERE tier = 'primitive'").fetchone()['c']
-        if count > 0:
-            return  # Already loaded
+        cur.execute("SELECT COUNT(*) AS c FROM word_classes WHERE tier = 'primitive'")
+        if self._fetchone(cur)['c'] > 0:
+            return
 
-        # Load from JSON file
         primitives_path = os.path.join(os.path.dirname(__file__), 'semantic_primitives.json')
         if not os.path.exists(primitives_path):
-            return  # File not found, skip
+            return
 
         with open(primitives_path, 'r') as f:
             data = json.load(f)
 
-        # Insert primitives
+        if self.pg:
+            upsert_full = f"""
+                INSERT INTO word_classes (word, tier, definition_type, notes)
+                VALUES ({ph}, {ph}, {ph}, {ph})
+                ON CONFLICT (word) DO NOTHING
+            """
+            upsert_short = f"""
+                INSERT INTO word_classes (word, tier, definition_type)
+                VALUES ({ph}, {ph}, {ph})
+                ON CONFLICT (word) DO NOTHING
+            """
+        else:
+            upsert_full = "INSERT OR IGNORE INTO word_classes (word, tier, definition_type, notes) VALUES (?, ?, ?, ?)"
+            upsert_short = "INSERT OR IGNORE INTO word_classes (word, tier, definition_type) VALUES (?, ?, ?)"
+
         for word, info in data.get('primitives', {}).items():
-            cursor.execute("""
-                INSERT OR IGNORE INTO word_classes (word, tier, definition_type, notes)
-                VALUES (?, ?, ?, ?)
-            """, (word.lower(), info['tier'], info['type'], info.get('notes', '')))
+            cur.execute(upsert_full, (word.lower(), info['tier'], info['type'], info.get('notes', '')))
 
-        # Insert functional words
         for word, info in data.get('functional', {}).items():
-            cursor.execute("""
-                INSERT OR IGNORE INTO word_classes (word, tier, definition_type)
-                VALUES (?, ?, ?)
-            """, (word.lower(), info['tier'], info['type']))
+            cur.execute(upsert_short, (word.lower(), info['tier'], info['type']))
 
-        self.conn.commit()
+        self._commit()
+
+    # ─── Word Classification ───────────────────────────────────────────────────
 
     def classify_word(self, word: str) -> Dict:
-        """
-        Classify a word into its tier.
+        ph = self._ph()
+        cur = self._cursor()
+        cur.execute(f"SELECT * FROM word_classes WHERE word = {ph}", (word.lower(),))
+        row = self._fetchone(cur)
 
-        Returns:
-            Dict with tier, type, and whether it needs definition
-        """
-        word_lower = word.lower()
-
-        # Check database first
-        cursor = self.conn.cursor()
-        result = cursor.execute(
-            "SELECT * FROM word_classes WHERE word = ?",
-            (word_lower,)
-        ).fetchone()
-
-        if result:
+        if row:
             return {
-                'word': word_lower,
-                'tier': result['tier'],
-                'type': result['definition_type'],
-                'needs_definition': result['tier'] not in ['primitive', 'functional']
+                'word': word.lower(),
+                'tier': row['tier'],
+                'type': row['definition_type'],
+                'needs_definition': row['tier'] not in ['primitive', 'functional']
             }
 
-        # Check if it's a known subjective word
         primitives_path = os.path.join(os.path.dirname(__file__), 'semantic_primitives.json')
         if os.path.exists(primitives_path):
             with open(primitives_path, 'r') as f:
                 data = json.load(f)
-                if word_lower in data.get('subjective_markers', []):
-                    return {
-                        'word': word_lower,
-                        'tier': 'subjective',
-                        'type': 'personal',
-                        'needs_definition': True
-                    }
+            if word.lower() in data.get('subjective_markers', []):
+                return {'word': word.lower(), 'tier': 'subjective', 'type': 'personal', 'needs_definition': True}
 
-        # Unknown word - classify as derived (needs definition)
-        return {
-            'word': word_lower,
-            'tier': 'derived',
-            'type': 'unknown',
-            'needs_definition': True
-        }
+        return {'word': word.lower(), 'tier': 'derived', 'type': 'unknown', 'needs_definition': True}
 
     def get_word_tier(self, word: str) -> str:
-        """Get the tier of a word (primitive, functional, concrete, derived, subjective)."""
-        classification = self.classify_word(word)
-        return classification['tier']
+        return self.classify_word(word)['tier']
 
     def get_undefined_terms(self, terms: List[str], user_id: str) -> List[Dict]:
-        """
-        Check which terms are undefined for a user.
-
-        Returns list of dicts with term info and classification.
-        """
         undefined = []
-
         for term in terms:
-            classification = self.classify_word(term)
-
-            # Skip functional words
-            if classification['tier'] == 'functional':
+            c = self.classify_word(term)
+            if c['tier'] in ['functional', 'primitive']:
                 continue
-
-            # Primitives don't need definition
-            if classification['tier'] == 'primitive':
-                continue
-
-            # Check if user has defined this term
-            personal_defs = self.search_definitions(term, user_id=user_id)
-
-            if not personal_defs:
-                # Check community definitions
-                community_defs = self.search_definitions(term, scope="community:%")
-
+            personal = self.search_definitions(term, user_id=user_id)
+            if not personal:
+                community = self.search_definitions(term, scope="community:%")
                 undefined.append({
                     'term': term,
-                    'classification': classification,
-                    'community_definitions': len(community_defs),
-                    'suggested_action': 'define' if community_defs == 0 else 'vote_or_define'
+                    'classification': c,
+                    'community_definitions': len(community),
+                    'suggested_action': 'define' if not community else 'vote_or_define'
                 })
-
         return undefined
 
     def detect_circular_definition(self, term: str, question: str, max_depth: int = 10) -> Dict:
-        """
-        Detect if defining 'term' with 'question' creates a circular definition.
-
-        Returns dict with is_circular flag and path if circular.
-        """
-        # Extract words from question
-        words = question.lower().split()
-
-        # Check if term appears in its own definition
-        if term.lower() in words:
+        if term.lower() in question.lower().split():
             return {
                 'is_circular': True,
-                'reason': f'Direct self-reference: "{term}" appears in its own definition',
+                'reason': f'"{term}" appears in its own definition',
                 'path': [term, term]
             }
-
-        # Check for indirect cycles (term A → B → C → A)
-        # This requires checking the definition chain
-        visited = set()
-        path = [term]
-
-        def check_chain(current_term, depth=0):
-            if depth > max_depth:
-                return False
-
-            if current_term in visited:
-                return True  # Found cycle
-
-            visited.add(current_term)
-
-            # Get definitions of current_term
-            # (simplified - in real implementation would parse using_terms from existing definitions)
-            return False
-
-        # For now, just check direct self-reference
-        # Full cycle detection would require analyzing the full definition graph
-
-        return {
-            'is_circular': False,
-            'reason': None,
-            'path': []
-        }
+        return {'is_circular': False, 'reason': None, 'path': []}
 
     def calculate_definition_depth(self, term: str, user_id: str, max_depth: int = 10) -> Dict:
-        """
-        Calculate how many steps to reach primitives from this term.
-
-        Returns dict with depth, path to primitives, and grounding status.
-        """
-        # Get user's definition of this term
         definitions = self.search_definitions(term, user_id=user_id)
-
         if not definitions:
-            return {
-                'depth': -1,
-                'is_grounded': False,
-                'reason': 'No definition found',
-                'path': []
-            }
+            return {'depth': -1, 'is_grounded': False, 'reason': 'No definition found', 'path': []}
 
-        # Get the first definition (user's primary definition)
-        definition = definitions[0]
-        using_terms = json.loads(definition.get('using_terms', '[]'))
+        using_terms = json.loads(definitions[0].get('using_terms', '[]'))
+        all_primitive = all(
+            self.classify_word(t)['tier'] in ['primitive', 'functional']
+            for t in using_terms
+        )
+        return {
+            'depth': 1 if all_primitive else 2,
+            'is_grounded': True,
+            'reason': 'All terms are primitive' if all_primitive else 'Contains derived terms',
+            'path': [term]
+        }
 
-        # Check if all using terms are primitives or functional
-        all_primitive = True
-        max_term_depth = 0
-        path = [term]
-
-        for using_term in using_terms:
-            classification = self.classify_word(using_term)
-
-            if classification['tier'] in ['primitive', 'functional']:
-                continue
-            else:
-                all_primitive = False
-                # Would recursively check depth of using_term here
-                max_term_depth = max(max_term_depth, 1)
-
-        if all_primitive:
-            return {
-                'depth': 1,
-                'is_grounded': True,
-                'reason': 'All terms are primitive',
-                'path': path
-            }
-        else:
-            return {
-                'depth': max_term_depth + 1,
-                'is_grounded': True,  # Assume grounded if we haven't hit max_depth
-                'reason': 'Contains derived terms',
-                'path': path
-            }
+    # ─── Nodes ────────────────────────────────────────────────────────────────
 
     def create_node(
         self,
@@ -310,322 +255,198 @@ class TimelineDB:
         parents: List[Dict[str, str]] = None,
         scope: str = None
     ) -> str:
-        """
-        Create a new decision node.
-
-        Args:
-            question: The yes/no question
-            user_id: User creating the node
-            defining_terms: Terms this node defines (e.g., ["I"])
-            using_terms: All terms used in question (e.g., ["I", "consciousness"])
-            parents: Parent nodes [{"id": "xyz", "via": "yes"}]
-            scope: "personal:user123", "community:xyz", or "global"
-
-        Returns:
-            Node ID (UUID)
-        """
+        ph = self._ph()
         node_id = str(uuid.uuid4())
-        defining_terms = defining_terms or []
-        using_terms = using_terms or []
-        parents = parents or []
-        scope = scope or f"personal:{user_id}"
-
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            INSERT INTO nodes (id, question, defining_terms, using_terms, parents, scope, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            node_id,
-            question,
-            json.dumps(defining_terms),
-            json.dumps(using_terms),
-            json.dumps(parents),
-            scope,
-            user_id,
-            int(datetime.now().timestamp())
-        ))
-        self.conn.commit()
-
+        cur = self._cursor()
+        cur.execute(
+            f"""INSERT INTO nodes (id, question, defining_terms, using_terms, parents, scope, created_by, created_at)
+                VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})""",
+            (
+                node_id,
+                question,
+                json.dumps(defining_terms or []),
+                json.dumps(using_terms or []),
+                json.dumps(parents or []),
+                scope or f"personal:{user_id}",
+                user_id,
+                int(datetime.now().timestamp())
+            )
+        )
+        self._commit()
         return node_id
 
-    def vote(self, node_id: str, user_id: str, vote: str):
-        """
-        Vote on a node (yes or no).
+    def get_node(self, node_id: str) -> Optional[Dict]:
+        ph = self._ph()
+        cur = self._cursor()
+        cur.execute(f"SELECT * FROM nodes WHERE id = {ph}", (node_id,))
+        return self._fetchone(cur)
 
-        Args:
-            node_id: Node to vote on
-            user_id: User voting
-            vote: "yes" or "no"
-        """
+    # ─── Votes ────────────────────────────────────────────────────────────────
+
+    def vote(self, node_id: str, user_id: str, vote: str):
         if vote not in ["yes", "no"]:
             raise ValueError(f"Vote must be 'yes' or 'no', got: {vote}")
 
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            INSERT OR REPLACE INTO votes (node_id, user_id, vote, voted_at)
-            VALUES (?, ?, ?, ?)
-        """, (node_id, user_id, vote, int(datetime.now().timestamp())))
-        self.conn.commit()
+        ph = self._ph()
+        cur = self._cursor()
+        now = int(datetime.now().timestamp())
+
+        if self.pg:
+            cur.execute(
+                f"""INSERT INTO votes (node_id, user_id, vote, voted_at)
+                    VALUES ({ph},{ph},{ph},{ph})
+                    ON CONFLICT (node_id, user_id) DO UPDATE
+                    SET vote = EXCLUDED.vote, voted_at = EXCLUDED.voted_at""",
+                (node_id, user_id, vote, now)
+            )
+        else:
+            cur.execute(
+                "INSERT OR REPLACE INTO votes (node_id, user_id, vote, voted_at) VALUES (?,?,?,?)",
+                (node_id, user_id, vote, now)
+            )
+        self._commit()
 
     def get_vote(self, node_id: str, user_id: str) -> Optional[str]:
-        """Get user's vote on a node (returns 'yes', 'no', or None)."""
-        cursor = self.conn.cursor()
-        result = cursor.execute(
-            "SELECT vote FROM votes WHERE node_id = ? AND user_id = ?",
-            (node_id, user_id)
-        ).fetchone()
-        return result['vote'] if result else None
+        ph = self._ph()
+        cur = self._cursor()
+        cur.execute(f"SELECT vote FROM votes WHERE node_id = {ph} AND user_id = {ph}", (node_id, user_id))
+        row = self._fetchone(cur)
+        return row['vote'] if row else None
 
-    def search_definitions(
-        self,
-        term: str,
-        scope: str = None,
-        user_id: str = None
-    ) -> List[Dict]:
-        """
-        Search for definitions of a term.
+    def get_vote_count(self, node_id: str) -> Dict[str, int]:
+        ph = self._ph()
+        cur = self._cursor()
+        cur.execute(f"SELECT vote, COUNT(*) AS count FROM votes WHERE node_id = {ph} GROUP BY vote", (node_id,))
+        counts = {"yes": 0, "no": 0}
+        for row in self._fetchall(cur):
+            counts[row['vote']] = row['count']
+        return counts
 
-        Args:
-            term: Term to search for (e.g., "I", "consciousness")
-            scope: Filter by scope ("personal:user123", "community:xyz", "global")
-            user_id: If provided, searches personal scope first, then community
+    # ─── Search ───────────────────────────────────────────────────────────────
 
-        Returns:
-            List of nodes that define this term
-        """
-        cursor = self.conn.cursor()
-
-        # Search pattern for JSON array
+    def search_definitions(self, term: str, scope: str = None, user_id: str = None) -> List[Dict]:
+        ph = self._ph()
+        cur = self._cursor()
+        # Use ILIKE for PostgreSQL (case-insensitive), LIKE for SQLite
+        like_op = "ILIKE" if self.pg else "LIKE"
         pattern = f'%"{term}"%'
 
         if user_id and not scope:
-            # Search personal first, then community
-            personal_results = cursor.execute(
-                "SELECT * FROM nodes WHERE defining_terms LIKE ? AND scope = ?",
+            cur.execute(
+                f"SELECT * FROM nodes WHERE defining_terms {like_op} {ph} AND scope = {ph}",
                 (pattern, f"personal:{user_id}")
-            ).fetchall()
-
-            if personal_results:
-                return [dict(row) for row in personal_results]
-
-            # Fall back to community
+            )
+            rows = self._fetchall(cur)
+            if rows:
+                return rows
             scope = "community:%"
 
         if scope:
             if "%" in scope:
-                results = cursor.execute(
-                    "SELECT * FROM nodes WHERE defining_terms LIKE ? AND scope LIKE ?",
+                cur.execute(
+                    f"SELECT * FROM nodes WHERE defining_terms {like_op} {ph} AND scope {like_op} {ph}",
                     (pattern, scope)
-                ).fetchall()
+                )
             else:
-                results = cursor.execute(
-                    "SELECT * FROM nodes WHERE defining_terms LIKE ? AND scope = ?",
+                cur.execute(
+                    f"SELECT * FROM nodes WHERE defining_terms {like_op} {ph} AND scope = {ph}",
                     (pattern, scope)
-                ).fetchall()
+                )
         else:
-            results = cursor.execute(
-                "SELECT * FROM nodes WHERE defining_terms LIKE ?",
-                (pattern,)
-            ).fetchall()
+            cur.execute(f"SELECT * FROM nodes WHERE defining_terms {like_op} {ph}", (pattern,))
 
-        return [dict(row) for row in results]
+        return self._fetchall(cur)
+
+    # ─── Timeline ─────────────────────────────────────────────────────────────
 
     def get_user_timeline(self, user_id: str, vote_filter: str = "yes") -> List[Dict]:
-        """
-        Get all nodes in user's timeline (nodes they voted on).
-
-        Args:
-            user_id: User ID
-            vote_filter: "yes", "no", or "all"
-
-        Returns:
-            List of nodes with vote information
-        """
-        cursor = self.conn.cursor()
-
+        ph = self._ph()
+        cur = self._cursor()
         if vote_filter == "all":
-            query = """
-                SELECT n.*, v.vote, v.voted_at
-                FROM nodes n
-                JOIN votes v ON n.id = v.node_id
-                WHERE v.user_id = ?
-                ORDER BY v.voted_at
-            """
-            params = (user_id,)
-        else:
-            query = """
-                SELECT n.*, v.vote, v.voted_at
-                FROM nodes n
-                JOIN votes v ON n.id = v.node_id
-                WHERE v.user_id = ? AND v.vote = ?
-                ORDER BY v.voted_at
-            """
-            params = (user_id, vote_filter)
-
-        results = cursor.execute(query, params).fetchall()
-        return [dict(row) for row in results]
-
-    def get_children(
-        self,
-        node_id: str,
-        via: str = None,
-        user_id: str = None,
-        voted: str = None
-    ) -> List[Dict]:
-        """
-        Get child nodes (nodes that have this node as a parent).
-
-        Args:
-            node_id: Parent node ID
-            via: Filter by path ("yes" or "no")
-            user_id: If provided, only return nodes user voted on
-            voted: If provided with user_id, filter by vote ("yes" or "no")
-
-        Returns:
-            List of child nodes
-        """
-        cursor = self.conn.cursor()
-
-        # Build search pattern
-        if via:
-            pattern = f'%"id": "{node_id}", "via": "{via}"%'
-        else:
-            pattern = f'%"id": "{node_id}"%'
-
-        if user_id:
-            if voted:
-                query = """
-                    SELECT n.*, v.vote
-                    FROM nodes n
+            cur.execute(
+                f"""SELECT n.*, v.vote, v.voted_at FROM nodes n
                     JOIN votes v ON n.id = v.node_id
-                    WHERE n.parents LIKE ?
-                      AND v.user_id = ?
-                      AND v.vote = ?
-                """
-                params = (pattern, user_id, voted)
-            else:
-                query = """
-                    SELECT n.*, v.vote
-                    FROM nodes n
-                    JOIN votes v ON n.id = v.node_id
-                    WHERE n.parents LIKE ?
-                      AND v.user_id = ?
-                """
-                params = (pattern, user_id)
+                    WHERE v.user_id = {ph} ORDER BY v.voted_at""",
+                (user_id,)
+            )
         else:
-            query = "SELECT * FROM nodes WHERE parents LIKE ?"
-            params = (pattern,)
-
-        results = cursor.execute(query, params).fetchall()
-        return [dict(row) for row in results]
+            cur.execute(
+                f"""SELECT n.*, v.vote, v.voted_at FROM nodes n
+                    JOIN votes v ON n.id = v.node_id
+                    WHERE v.user_id = {ph} AND v.vote = {ph} ORDER BY v.voted_at""",
+                (user_id, vote_filter)
+            )
+        return self._fetchall(cur)
 
     def get_root_nodes(self, user_id: str) -> List[Dict]:
-        """
-        Get root nodes for user (nodes with no parents that user voted yes on).
+        ph = self._ph()
+        cur = self._cursor()
+        cur.execute(
+            f"""SELECT n.*, v.vote FROM nodes n
+                JOIN votes v ON n.id = v.node_id
+                WHERE v.user_id = {ph} AND v.vote = 'yes' AND n.parents = '[]'""",
+            (user_id,)
+        )
+        return self._fetchall(cur)
 
-        Args:
-            user_id: User ID
+    def get_children(self, node_id: str, via: str = None, user_id: str = None, voted: str = None) -> List[Dict]:
+        ph = self._ph()
+        cur = self._cursor()
+        like_op = "ILIKE" if self.pg else "LIKE"
+        pattern = f'%"id": "{node_id}", "via": "{via}"%' if via else f'%"id": "{node_id}"%'
 
-        Returns:
-            List of root nodes
-        """
-        cursor = self.conn.cursor()
-        results = cursor.execute("""
-            SELECT n.*, v.vote
-            FROM nodes n
-            JOIN votes v ON n.id = v.node_id
-            WHERE v.user_id = ?
-              AND v.vote = 'yes'
-              AND n.parents = '[]'
-        """, (user_id,)).fetchall()
-
-        return [dict(row) for row in results]
+        if user_id and voted:
+            cur.execute(
+                f"""SELECT n.*, v.vote FROM nodes n
+                    JOIN votes v ON n.id = v.node_id
+                    WHERE n.parents {like_op} {ph} AND v.user_id = {ph} AND v.vote = {ph}""",
+                (pattern, user_id, voted)
+            )
+        elif user_id:
+            cur.execute(
+                f"""SELECT n.*, v.vote FROM nodes n
+                    JOIN votes v ON n.id = v.node_id
+                    WHERE n.parents {like_op} {ph} AND v.user_id = {ph}""",
+                (pattern, user_id)
+            )
+        else:
+            cur.execute(f"SELECT * FROM nodes WHERE parents {like_op} {ph}", (pattern,))
+        return self._fetchall(cur)
 
     def calculate_reachable_nodes(self, user_id: str) -> Set[str]:
-        """
-        Calculate all nodes reachable from user's yes votes.
-
-        Uses BFS from root nodes, following only yes-voted paths.
-
-        Args:
-            user_id: User ID
-
-        Returns:
-            Set of reachable node IDs
-        """
         reachable = set()
-        queue = [node['id'] for node in self.get_root_nodes(user_id)]
-
+        queue = [n['id'] for n in self.get_root_nodes(user_id)]
         while queue:
             node_id = queue.pop(0)
             if node_id in reachable:
                 continue
-
             reachable.add(node_id)
-
-            # Get children where user voted yes
-            children = self.get_children(node_id, user_id=user_id, voted="yes")
-            for child in children:
-                # Check that user's vote path matches parent link
-                parents = json.loads(child['parents'])
-                user_vote = child.get('vote')
-
-                # Find the parent link for current node
-                for parent in parents:
-                    if parent['id'] == node_id and user_vote == 'yes':
+            for child in self.get_children(node_id, user_id=user_id, voted="yes"):
+                for parent in json.loads(child.get('parents', '[]')):
+                    if parent['id'] == node_id and child.get('vote') == 'yes':
                         queue.append(child['id'])
-
         return reachable
 
     def get_orphaned_nodes(self, user_id: str) -> List[Dict]:
-        """
-        Find nodes in user's timeline that are no longer reachable.
-
-        These are nodes where user voted yes, but changing an upstream
-        vote broke the path to them.
-
-        Args:
-            user_id: User ID
-
-        Returns:
-            List of orphaned nodes
-        """
-        timeline_nodes = {node['id']: node for node in self.get_user_timeline(user_id, "yes")}
+        timeline = {n['id']: n for n in self.get_user_timeline(user_id, "yes")}
         reachable = self.calculate_reachable_nodes(user_id)
+        return [n for nid, n in timeline.items() if nid not in reachable]
 
-        orphaned = []
-        for node_id, node in timeline_nodes.items():
-            if node_id not in reachable:
-                orphaned.append(node)
+    # ─── Stats ────────────────────────────────────────────────────────────────
 
-        return orphaned
-
-    def get_node(self, node_id: str) -> Optional[Dict]:
-        """Get a single node by ID."""
-        cursor = self.conn.cursor()
-        result = cursor.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
-        return dict(result) if result else None
-
-    def get_vote_count(self, node_id: str) -> Dict[str, int]:
-        """Get vote counts for a node."""
-        cursor = self.conn.cursor()
-        results = cursor.execute(
-            "SELECT vote, COUNT(*) as count FROM votes WHERE node_id = ? GROUP BY vote",
-            (node_id,)
-        ).fetchall()
-
-        counts = {"yes": 0, "no": 0}
-        for row in results:
-            counts[row['vote']] = row['count']
-
-        return counts
+    def get_stats(self) -> Dict:
+        cur = self._cursor()
+        cur.execute("SELECT COUNT(*) AS c FROM nodes")
+        nodes = self._fetchone(cur)['c']
+        cur.execute("SELECT COUNT(*) AS c FROM votes")
+        votes = self._fetchone(cur)['c']
+        cur.execute("SELECT COUNT(DISTINCT user_id) AS c FROM votes")
+        users = self._fetchone(cur)['c']
+        return {"nodes": nodes, "votes": votes, "users": users}
 
     def close(self):
-        """Close database connection."""
         self.conn.close()
 
 
-# Convenience functions for CLI
-def init_db(db_path: str = "data/timeline.db") -> TimelineDB:
-    """Initialize and return database instance."""
-    return TimelineDB(db_path)
+def init_db() -> TimelineDB:
+    return TimelineDB()

@@ -180,17 +180,7 @@ async def ai_analyze(question: str):
 @app.get("/api/stats")
 async def get_stats():
     """Get database statistics."""
-    cursor = db.conn.cursor()
-
-    node_count = cursor.execute("SELECT COUNT(*) as count FROM nodes").fetchone()['count']
-    vote_count = cursor.execute("SELECT COUNT(*) as count FROM votes").fetchone()['count']
-    user_count = cursor.execute("SELECT COUNT(DISTINCT user_id) as count FROM votes").fetchone()['count']
-
-    return {
-        "nodes": node_count,
-        "votes": vote_count,
-        "users": user_count
-    }
+    return db.get_stats()
 
 
 @app.get("/api/words/classify/{word}")
