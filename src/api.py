@@ -104,22 +104,7 @@ async def get_node(node_id: str):
     return node
 
 
-@app.post("/api/chat")
-async def chat_with_ai(request: ChatRequest):
-    """Send message to Claude, get response + extracted statement nodes."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-
-    if not api_key:
-        return {
-            "response": "No AI key set. Add ANTHROPIC_API_KEY in Replit Secrets to enable AI conversations. Each statement the AI makes will become a node you can vote TRUE, FALSE, or PERHAPS.",
-            "nodes": []
-        }
-
-    try:
-        from anthropic import Anthropic
-        client = Anthropic(api_key=api_key)
-
-        system = """You are a philosophical AI for Truth Timeline — an app where your statements become nodes in the user's personal truth graph.
+SYSTEM_PROMPT = """You are a philosophical AI for Truth Timeline — an app where your statements become nodes in the user's personal truth graph.
 
 As you respond, be clear and thoughtful. After your main response, extract 2-3 key DECLARATIVE STATEMENTS from what you said.
 
@@ -132,46 +117,98 @@ ALWAYS end with this exact block:
 
 Statements should be clear, testable, voteable claims. No questions. No hedging."""
 
-        messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
-        response = client.messages.create(
-            model="claude-opus-4-5-20251101",
-            max_tokens=1024,
-            system=system,
-            messages=messages
-        )
+def _parse_ai_content(content, user_id):
+    """Parse AI response, extract nodes, create them in DB. Returns (response_text, nodes)."""
+    nodes_match = re.search(r'<nodes>(.*?)</nodes>', content, re.DOTALL)
+    main_response = content
+    created_nodes = []
 
-        content = response.content[0].text
+    if nodes_match:
+        try:
+            nodes_data = json.loads(nodes_match.group(1).strip())
+            main_response = content[:nodes_match.start()].strip()
 
-        # Parse out nodes block
-        nodes_match = re.search(r'<nodes>(.*?)</nodes>', content, re.DOTALL)
-        main_response = content
-        created_nodes = []
+            for n in nodes_data:
+                node_id = db.create_node(
+                    question=n.get('text', ''),
+                    user_id=user_id,
+                    defining_terms=[],
+                    using_terms=[],
+                    scope='global'
+                )
+                node = db.get_node(node_id)
+                if node:
+                    node['context'] = n.get('context', '')
+                    created_nodes.append(node)
+        except Exception:
+            pass
 
-        if nodes_match:
-            try:
-                nodes_data = json.loads(nodes_match.group(1).strip())
-                main_response = content[:nodes_match.start()].strip()
+    return main_response, created_nodes
 
-                for n in nodes_data:
-                    node_id = db.create_node(
-                        question=n.get('text', ''),
-                        user_id=request.user_id,
-                        defining_terms=[],
-                        using_terms=[],
-                        scope='global'
-                    )
-                    node = db.get_node(node_id)
-                    if node:
-                        node['context'] = n.get('context', '')
-                        created_nodes.append(node)
-            except Exception:
+
+@app.post("/api/chat")
+async def chat_with_ai(request: ChatRequest):
+    """Send message to AI (Anthropic or Gemini), get response + extracted nodes."""
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    google_key    = os.environ.get("GOOGLE_API_KEY")
+
+    if not anthropic_key and not google_key:
+        return {
+            "response": "No AI key found. Add GOOGLE_API_KEY (free at aistudio.google.com) or ANTHROPIC_API_KEY in Replit Secrets.",
+            "nodes": []
+        }
+
+    # Try Anthropic first
+    if anthropic_key:
+        try:
+            from anthropic import Anthropic
+            client   = Anthropic(api_key=anthropic_key)
+            messages = [{"role": m.role, "content": m.content} for m in request.messages]
+            response = client.messages.create(
+                model="claude-opus-4-5-20251101",
+                max_tokens=1024,
+                system=SYSTEM_PROMPT,
+                messages=messages
+            )
+            content = response.content[0].text
+            main_response, nodes = _parse_ai_content(content, request.user_id)
+            return {"response": main_response, "nodes": nodes}
+        except Exception as e:
+            err = str(e)
+            # Fall through to Gemini if credits exhausted
+            if google_key and ("credit" in err.lower() or "billing" in err.lower() or "balance" in err.lower()):
                 pass
+            else:
+                return {"response": f"AI error: {err}", "nodes": []}
 
-        return {"response": main_response, "nodes": created_nodes}
+    # Try Google Gemini
+    if google_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=google_key)
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                system_instruction=SYSTEM_PROMPT
+            )
+            # Build conversation history for Gemini
+            history = []
+            msgs = list(request.messages)
+            for m in msgs[:-1]:
+                history.append({
+                    "role": "user" if m.role == "user" else "model",
+                    "parts": [m.content]
+                })
+            last_msg = msgs[-1].content if msgs else ""
+            chat    = model.start_chat(history=history)
+            result  = chat.send_message(last_msg)
+            content = result.text
+            main_response, nodes = _parse_ai_content(content, request.user_id)
+            return {"response": main_response, "nodes": nodes}
+        except Exception as e:
+            return {"response": f"AI error: {str(e)}", "nodes": []}
 
-    except Exception as e:
-        return {"response": f"AI error: {str(e)}", "nodes": []}
+    return {"response": "No AI available.", "nodes": []}
 
 
 @app.post("/api/votes")
