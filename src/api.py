@@ -54,6 +54,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     user_id: str
+    provider: str = "auto"  # "anthropic", "google", "openai", or "auto"
 
 
 class SearchRequest(BaseModel):
@@ -147,68 +148,108 @@ def _parse_ai_content(content, user_id):
     return main_response, created_nodes
 
 
+@app.get("/api/providers")
+async def get_providers():
+    """Return which AI providers are configured (keys set)."""
+    return {
+        "providers": [
+            {
+                "id": "anthropic",
+                "name": "Claude",
+                "maker": "Anthropic",
+                "available": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                "free": False
+            },
+            {
+                "id": "google",
+                "name": "Gemini",
+                "maker": "Google",
+                "available": bool(os.environ.get("GOOGLE_API_KEY")),
+                "free": True
+            },
+            {
+                "id": "openai",
+                "name": "ChatGPT",
+                "maker": "OpenAI",
+                "available": bool(os.environ.get("OPENAI_API_KEY")),
+                "free": False
+            }
+        ]
+    }
+
+
+def _call_anthropic(messages, user_id):
+    from anthropic import Anthropic
+    client   = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    msgs     = [{"role": m.role, "content": m.content} for m in messages]
+    response = client.messages.create(
+        model="claude-opus-4-5-20251101",
+        max_tokens=1024,
+        system=SYSTEM_PROMPT,
+        messages=msgs
+    )
+    return _parse_ai_content(response.content[0].text, user_id)
+
+
+def _call_google(messages, user_id):
+    import google.generativeai as genai
+    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+    model   = genai.GenerativeModel(model_name="gemini-1.5-flash",
+                                    system_instruction=SYSTEM_PROMPT)
+    history = []
+    msgs    = list(messages)
+    for m in msgs[:-1]:
+        history.append({"role": "user" if m.role == "user" else "model",
+                         "parts": [m.content]})
+    chat   = model.start_chat(history=history)
+    result = chat.send_message(msgs[-1].content if msgs else "")
+    return _parse_ai_content(result.text, user_id)
+
+
+def _call_openai(messages, user_id):
+    from openai import OpenAI
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    msgs   = [{"role": "system", "content": SYSTEM_PROMPT}]
+    msgs  += [{"role": m.role, "content": m.content} for m in messages]
+    resp   = client.chat.completions.create(model="gpt-4o-mini", messages=msgs, max_tokens=1024)
+    return _parse_ai_content(resp.choices[0].message.content, user_id)
+
+
+_CALLERS = {
+    "anthropic": (_call_anthropic, "ANTHROPIC_API_KEY"),
+    "google":    (_call_google,    "GOOGLE_API_KEY"),
+    "openai":    (_call_openai,    "OPENAI_API_KEY"),
+}
+
+
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatRequest):
-    """Send message to AI (Anthropic or Gemini), get response + extracted nodes."""
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-    google_key    = os.environ.get("GOOGLE_API_KEY")
+    """Send message to chosen AI provider, return response + extracted nodes."""
+    provider = request.provider
 
-    if not anthropic_key and not google_key:
-        return {
-            "response": "No AI key found. Add GOOGLE_API_KEY (free at aistudio.google.com) or ANTHROPIC_API_KEY in Replit Secrets.",
-            "nodes": []
-        }
+    # Build ordered list: chosen provider first, then others as fallback
+    order = [provider] if provider != "auto" else ["anthropic", "google", "openai"]
+    if provider not in ("auto", "anthropic"):
+        order += [p for p in ["anthropic", "google", "openai"] if p != provider]
 
-    # Try Anthropic first
-    if anthropic_key:
+    for p in order:
+        fn, env_key = _CALLERS[p]
+        if not os.environ.get(env_key):
+            continue
         try:
-            from anthropic import Anthropic
-            client   = Anthropic(api_key=anthropic_key)
-            messages = [{"role": m.role, "content": m.content} for m in request.messages]
-            response = client.messages.create(
-                model="claude-opus-4-5-20251101",
-                max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                messages=messages
-            )
-            content = response.content[0].text
-            main_response, nodes = _parse_ai_content(content, request.user_id)
-            return {"response": main_response, "nodes": nodes}
+            main_response, nodes = fn(request.messages, request.user_id)
+            return {"response": main_response, "nodes": nodes, "provider": p}
         except Exception as e:
             err = str(e)
-            # Fall through to Gemini if credits exhausted
-            if google_key and ("credit" in err.lower() or "billing" in err.lower() or "balance" in err.lower()):
-                pass
-            else:
-                return {"response": f"AI error: {err}", "nodes": []}
+            # Only fall through on credit/billing errors; hard-fail on others
+            if not any(w in err.lower() for w in ("credit", "billing", "balance", "quota")):
+                return {"response": f"AI error: {err}", "nodes": [], "provider": p}
 
-    # Try Google Gemini
-    if google_key:
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=google_key)
-            model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
-                system_instruction=SYSTEM_PROMPT
-            )
-            # Build conversation history for Gemini
-            history = []
-            msgs = list(request.messages)
-            for m in msgs[:-1]:
-                history.append({
-                    "role": "user" if m.role == "user" else "model",
-                    "parts": [m.content]
-                })
-            last_msg = msgs[-1].content if msgs else ""
-            chat    = model.start_chat(history=history)
-            result  = chat.send_message(last_msg)
-            content = result.text
-            main_response, nodes = _parse_ai_content(content, request.user_id)
-            return {"response": main_response, "nodes": nodes}
-        except Exception as e:
-            return {"response": f"AI error: {str(e)}", "nodes": []}
-
-    return {"response": "No AI available.", "nodes": []}
+    return {
+        "response": "No AI key configured. Ask the app owner to add GOOGLE_API_KEY (free), ANTHROPIC_API_KEY, or OPENAI_API_KEY in Replit Secrets.",
+        "nodes": [],
+        "provider": None
+    }
 
 
 @app.post("/api/votes")

@@ -84,6 +84,95 @@ html, body {
 
 #login-screen input:focus { border-color: var(--accent); }
 
+.login-label {
+    font-size: 0.8rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    align-self: flex-start;
+    margin-top: 0.25rem;
+}
+
+.provider-list {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.provider-loading {
+    color: var(--dim);
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 0.5rem;
+}
+
+.provider-card {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    padding: 0.75rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    color: var(--text);
+}
+
+.provider-card.selected {
+    border-color: var(--accent);
+    background: rgba(99,102,241,0.1);
+}
+
+.provider-card.unavailable {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.provider-icon {
+    font-size: 1.5rem;
+    width: 2rem;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.provider-info { flex: 1; }
+
+.provider-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.provider-maker {
+    font-size: 0.75rem;
+    color: var(--dim);
+    margin-top: 1px;
+}
+
+.provider-badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+}
+
+.badge-free {
+    background: rgba(52,211,153,0.15);
+    color: var(--true);
+    border: 1px solid rgba(52,211,153,0.3);
+}
+
+.badge-no-key {
+    background: rgba(107,114,128,0.15);
+    color: var(--dim);
+    border: 1px solid rgba(107,114,128,0.3);
+}
+
 #login-screen button {
     width: 100%;
     padding: 0.875rem;
@@ -95,6 +184,7 @@ html, body {
     font-weight: 600;
     cursor: pointer;
     letter-spacing: 0.5px;
+    margin-top: 0.25rem;
 }
 
 #login-screen button:active { background: #4f46e5; }
@@ -155,6 +245,15 @@ html, body {
 /* ── CHAT TAB ── */
 #tab-chat {
     background: var(--bg);
+}
+
+.chat-header {
+    padding: 0.5rem 1rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.75rem;
+    color: var(--dim);
+    min-height: 28px;
 }
 
 .chat-messages {

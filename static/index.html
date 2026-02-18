@@ -14,7 +14,12 @@
             <div class="login-glyph">⬡</div>
             <h1>Truth Timeline</h1>
             <p class="login-sub">Map your reality through conversation</p>
-            <input id="username-input" type="text" placeholder="Your name" autocomplete="off" />
+            <input id="username-input" type="text" placeholder="Your name" autocomplete="off"
+                onkeydown="if(event.key==='Enter') login()" />
+            <p class="login-label">Choose your AI</p>
+            <div id="provider-list" class="provider-list">
+                <div class="provider-loading">Loading AI options…</div>
+            </div>
             <button onclick="login()">Begin</button>
         </div>
     </div>
@@ -34,6 +39,7 @@
 
         <!-- CHAT TAB -->
         <div id="tab-chat" class="tab">
+            <div id="chat-header" class="chat-header"></div>
             <div id="chat-messages" class="chat-messages">
                 <div class="chat-welcome">
                     <p>Ask any question. The AI's statements become nodes in your truth graph.</p>
