@@ -49,9 +49,13 @@ function logout() {
 }
 
 function showAppScreen() {
-    document.getElementById('login-screen').classList.remove('active');
-    document.getElementById('app-screen').classList.add('active');
-    document.getElementById('current-user').textContent = `👤 ${currentUser}`;
+    const loginScreen = document.getElementById('login-screen');
+    const appScreen = document.getElementById('app-screen');
+    loginScreen.style.display = 'none';
+    appScreen.style.display = 'block';
+    loginScreen.classList.remove('active');
+    appScreen.classList.add('active');
+    document.getElementById('current-user').textContent = '👤 ' + currentUser;
     showView('home');
 }
 
