@@ -1,15 +1,15 @@
 // ── STATE ──────────────────────────────────────────────────────────────────
-let currentUser    = null;
-let currentProvider = 'auto';  // selected AI provider id
-let selectedNode   = null;
-let chatHistory    = [];  // [{role, content}]
-let graphNodes     = [];  // all nodes loaded into the graph
-let graph          = null;
+let currentUser     = null;
+let currentProvider = 'auto';
+let currentFilter   = 'all';
+let selectedNode    = null;
+let chatHistory     = [];
+let graphNodes      = [];   // master list of all nodes
+let graph           = null;
 
-// ── STORAGE HELPERS ────────────────────────────────────────────────────────
-function storageGet(k)    { try { return localStorage.getItem(k); }      catch(e) { return null; } }
-function storageSet(k, v) { try { localStorage.setItem(k, v); }          catch(e) {} }
-function storageRemove(k) { try { localStorage.removeItem(k); }          catch(e) {} }
+// ── STORAGE ────────────────────────────────────────────────────────────────
+function storageGet(k)    { try { return localStorage.getItem(k); }  catch(e) { return null; } }
+function storageSet(k, v) { try { localStorage.setItem(k, v); }      catch(e) {} }
 
 // ── INIT ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -23,57 +23,45 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ── PROVIDERS ──────────────────────────────────────────────────────────────
-const PROVIDER_ICONS = {
-    anthropic: '🟣',
-    google:    '🔵',
-    openai:    '🟢'
-};
+const PROVIDER_ICONS = { anthropic: '🟣', google: '🔵', openai: '🟢' };
+const PROVIDER_NAMES = { anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', auto: 'AI' };
 
 async function loadProviders() {
     try {
         const res  = await fetch('/api/providers');
         const data = await res.json();
         renderProviders(data.providers);
-    } catch (e) {
-        document.getElementById('provider-list').innerHTML =
-            '<div class="provider-loading">Could not load providers</div>';
+    } catch(e) {
+        document.getElementById('provider-list').innerHTML = '<div class="provider-loading">Could not load</div>';
     }
 }
 
 function renderProviders(providers) {
     const list      = document.getElementById('provider-list');
     const savedProv = storageGet('ttProvider') || 'auto';
-    let   html      = '';
-
-    // Pick default: first available, or 'auto'
     const firstAvail = providers.find(p => p.available);
-    const defaultId  = savedProv !== 'auto' ? savedProv : (firstAvail ? firstAvail.id : 'auto');
+    const defaultId  = (savedProv !== 'auto') ? savedProv : (firstAvail ? firstAvail.id : 'auto');
+    currentProvider  = defaultId;
 
+    let html = '';
     for (const p of providers) {
-        const isSel  = p.id === defaultId;
-        const icon   = PROVIDER_ICONS[p.id] || '⚪';
-        const badge  = p.available
+        const isSel = p.id === defaultId;
+        const icon  = PROVIDER_ICONS[p.id] || '⚪';
+        const badge = p.available
             ? (p.free ? '<span class="provider-badge badge-free">FREE</span>' : '')
             : '<span class="provider-badge badge-no-key">NO KEY</span>';
-
         html += `
-        <button class="provider-card${isSel ? ' selected' : ''}${!p.available ? ' unavailable' : ''}"
-                id="pcard-${p.id}"
-                onclick="selectProvider('${p.id}')"
-                ${!p.available ? 'disabled' : ''}>
+        <button class="provider-card${isSel?' selected':''}${!p.available?' unavailable':''}"
+                id="pcard-${p.id}" onclick="selectProvider('${p.id}')"
+                ${!p.available?'disabled':''}>
             <span class="provider-icon">${icon}</span>
             <span class="provider-info">
                 <span class="provider-name">${p.name}</span>
                 <span class="provider-maker">${p.maker}</span>
-            </span>
-            ${badge}
+            </span>${badge}
         </button>`;
     }
-
     list.innerHTML = html;
-
-    // Set current selection
-    currentProvider = defaultId;
 }
 
 function selectProvider(id) {
@@ -102,48 +90,72 @@ function startApp() {
     as.style.display = 'flex';
     as.classList.add('active');
 
-    // Show which AI is active in chat header
-    const providerNames = { anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', auto: 'AI' };
-    const icons = { anthropic: '🟣', google: '🔵', openai: '🟢', auto: '◎' };
-    const hdr = document.getElementById('chat-header');
-    if (hdr) {
-        const name = providerNames[currentProvider] || currentProvider;
-        const icon = icons[currentProvider] || '◎';
-        hdr.textContent = `${icon} Chatting with ${name} · ${currentUser}`;
+    // User tag in filter bar
+    const tag = document.getElementById('user-tag');
+    if (tag) tag.textContent = currentUser;
+
+    // AI indicator in panel header
+    const ind = document.getElementById('ai-indicator');
+    if (ind) {
+        const icon = PROVIDER_ICONS[currentProvider] || '◎';
+        const name = PROVIDER_NAMES[currentProvider] || currentProvider;
+        ind.textContent = `${icon} ${name}`;
     }
 
     initGraph();
-    loadGraphNodes();
+    loadAllNodes();
 }
 
-// ── TABS ───────────────────────────────────────────────────────────────────
-function switchTab(name) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('tab-' + name).classList.add('active');
-    document.querySelector(`.nav-btn[data-tab="${name}"]`).classList.add('active');
+// ── FILTER ─────────────────────────────────────────────────────────────────
+function setFilter(f) {
+    currentFilter = f;
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+    document.querySelector(`.chip[data-filter="${f}"]`).classList.add('active');
+    if (graph) graph.dirty = true;
+}
 
-    if (name === 'graph') {
-        if (graph) { graph.resize(); graph.draw(); }
+function totalVotes(node) {
+    const vc = node.vote_counts || {};
+    return (vc.yes || 0) + (vc.no || 0) + (vc.maybe || 0);
+}
+
+function nodeRadius(node) {
+    // Size proportional to community engagement, min 12, max 38
+    const tv = totalVotes(node);
+    return Math.max(12, Math.min(38, 12 + tv * 2.5));
+}
+
+function getVisibleNodes(all) {
+    switch (currentFilter) {
+        case 'true':    return all.filter(n => n.user_vote === 'yes');
+        case 'false':   return all.filter(n => n.user_vote === 'no');
+        case 'perhaps': return all.filter(n => n.user_vote === 'maybe');
+        case 'hot':     return [...all].sort((a,b) => totalVotes(b) - totalVotes(a)).slice(0, 30);
+        default:        return all;
     }
-    if (name === 'timeline') {
-        loadTimeline();
-    }
+}
+
+// ── PANEL SWITCH ───────────────────────────────────────────────────────────
+function switchPanel(name) {
+    document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel-content').forEach(p => p.classList.remove('active'));
+    document.querySelector(`.panel-tab[data-panel="${name}"]`).classList.add('active');
+    document.getElementById('panel-' + name).classList.add('active');
+    if (name === 'timeline') renderTimeline();
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// GRAPH ENGINE
+// NODE GRAPH ENGINE
 // ══════════════════════════════════════════════════════════════════════════
 
 class NodeGraph {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
         this.ctx    = this.canvas.getContext('2d');
-        this.nodes  = [];
+        this.nodes  = [];          // all nodes with physics state
         this.pan    = { x: 0, y: 0 };
         this.scale  = 1;
-        this.drag   = null;   // { startX, startY, panStart }
-        this.raf    = null;
+        this.drag   = null;
         this.dirty  = true;
 
         this.resize();
@@ -152,12 +164,11 @@ class NodeGraph {
     }
 
     resize() {
-        const tab = document.getElementById('tab-graph');
-        this.canvas.width  = tab.clientWidth  || window.innerWidth;
-        this.canvas.height = tab.clientHeight || (window.innerHeight - 56);
+        const area = document.getElementById('graph-area');
+        this.canvas.width  = area.clientWidth  || window.innerWidth;
+        this.canvas.height = area.clientHeight || Math.floor(window.innerHeight * 0.55);
     }
 
-    // ── ADD / UPDATE NODES ─────────────────────────────────────────────────
     addNode(nodeData) {
         if (this.nodes.find(n => n.id === nodeData.id)) {
             this.updateNode(nodeData);
@@ -165,15 +176,15 @@ class NodeGraph {
         }
         const cx = this.canvas.width  / 2;
         const cy = this.canvas.height / 2;
-        const angle = Math.random() * Math.PI * 2;
-        const r     = 80 + Math.random() * 120;
-        nodeData.x  = cx + Math.cos(angle) * r;
-        nodeData.y  = cy + Math.sin(angle) * r;
-        nodeData.vx = (Math.random() - 0.5) * 2;
-        nodeData.vy = (Math.random() - 0.5) * 2;
+        const a  = Math.random() * Math.PI * 2;
+        const r  = 60 + Math.random() * 140;
+        nodeData.x  = cx + Math.cos(a) * r;
+        nodeData.y  = cy + Math.sin(a) * r;
+        nodeData.vx = (Math.random() - 0.5) * 1.5;
+        nodeData.vy = (Math.random() - 0.5) * 1.5;
         this.nodes.push(nodeData);
         this.dirty = true;
-        this.updateEmpty();
+        this.updateOverlay();
     }
 
     updateNode(nodeData) {
@@ -185,42 +196,49 @@ class NodeGraph {
         }
     }
 
-    updateEmpty() {
-        const el = document.getElementById('graph-empty');
-        if (el) el.classList.toggle('hidden', this.nodes.length > 0);
-        const info = document.getElementById('graph-info');
-        if (info) info.textContent = this.nodes.length > 0 ? `${this.nodes.length} node${this.nodes.length !== 1 ? 's' : ''}` : '';
+    updateOverlay() {
+        const empty = document.getElementById('graph-empty');
+        const info  = document.getElementById('graph-info');
+        const vis   = getVisibleNodes(this.nodes);
+        if (empty) empty.classList.toggle('hidden', this.nodes.length > 0);
+        if (info)  info.textContent = this.nodes.length > 0
+            ? `${vis.length} / ${this.nodes.length} nodes`
+            : '';
     }
 
     // ── PHYSICS ────────────────────────────────────────────────────────────
     tick() {
-        if (this.nodes.length < 2) return;
-        const cx = this.canvas.width  / 2;
-        const cy = this.canvas.height / 2;
+        const visible = getVisibleNodes(this.nodes);
+        if (visible.length < 2) return;
+        const cx = this.canvas.width / 2, cy = this.canvas.height / 2;
 
-        for (let i = 0; i < this.nodes.length; i++) {
-            const a = this.nodes[i];
+        for (let i = 0; i < visible.length; i++) {
+            const a  = visible[i];
+            const ra = nodeRadius(a);
 
-            // Gentle pull toward center
-            a.vx += (cx - a.x) * 0.0008;
-            a.vy += (cy - a.y) * 0.0008;
+            // Center gravity
+            a.vx += (cx - a.x) * 0.0006;
+            a.vy += (cy - a.y) * 0.0006;
 
-            for (let j = i + 1; j < this.nodes.length; j++) {
-                const b  = this.nodes[j];
-                const dx = b.x - a.x;
-                const dy = b.y - a.y;
-                const d  = Math.sqrt(dx * dx + dy * dy) || 1;
-                const f  = Math.min(4000 / (d * d), 8);
-                const fx = (dx / d) * f;
-                const fy = (dy / d) * f;
-                a.vx -= fx;  a.vy -= fy;
-                b.vx += fx;  b.vy += fy;
+            for (let j = i + 1; j < visible.length; j++) {
+                const b  = visible[j];
+                const rb = nodeRadius(b);
+                const dx = b.x - a.x, dy = b.y - a.y;
+                const d  = Math.sqrt(dx*dx + dy*dy) || 1;
+                const minDist = ra + rb + 30;
+                const f  = Math.min(5000 / (d * d), 10);
+                const fx = (dx / d) * f, fy = (dy / d) * f;
+                a.vx -= fx; a.vy -= fy;
+                b.vx += fx; b.vy += fy;
+                // Push apart if overlapping
+                if (d < minDist) {
+                    const push = (minDist - d) * 0.1;
+                    a.vx -= (dx/d)*push; a.vy -= (dy/d)*push;
+                    b.vx += (dx/d)*push; b.vy += (dy/d)*push;
+                }
             }
-
-            a.vx *= 0.85;
-            a.vy *= 0.85;
-            a.x  += a.vx;
-            a.y  += a.vy;
+            a.vx *= 0.82; a.vy *= 0.82;
+            a.x  += a.vx;  a.y  += a.vy;
         }
         this.dirty = true;
     }
@@ -230,16 +248,15 @@ class NodeGraph {
         const { ctx, canvas, pan, scale } = this;
         const w = canvas.width, h = canvas.height;
 
-        ctx.clearRect(0, 0, w, h);
+        // Background
         ctx.fillStyle = '#07080f';
         ctx.fillRect(0, 0, w, h);
 
-        // Starfield
-        ctx.fillStyle = 'rgba(255,255,255,0.25)';
-        const seed = 42;
-        for (let i = 0; i < 60; i++) {
-            const sx = ((seed * (i * 7 + 3) * 1234567) % w + w) % w;
-            const sy = ((seed * (i * 11 + 5) * 7654321) % h + h) % h;
+        // Subtle starfield
+        ctx.fillStyle = 'rgba(255,255,255,0.18)';
+        for (let i = 0; i < 50; i++) {
+            const sx = ((42 * (i*7+3) * 1234567) % w + w) % w;
+            const sy = ((42 * (i*11+5) * 7654321) % h + h) % h;
             ctx.fillRect(sx, sy, 1, 1);
         }
 
@@ -247,27 +264,32 @@ class NodeGraph {
         ctx.translate(pan.x, pan.y);
         ctx.scale(scale, scale);
 
-        const nodeColor = (n) => {
+        const visible = getVisibleNodes(this.nodes);
+        const visSet  = new Set(visible.map(n => n.id));
+
+        const color = (n) => {
             if (n.user_vote === 'yes')   return '#34d399';
             if (n.user_vote === 'no')    return '#f87171';
             if (n.user_vote === 'maybe') return '#fbbf24';
             return '#6366f1';
         };
 
-        // Draw nodes
         for (const node of this.nodes) {
-            const c  = nodeColor(node);
-            const r  = 22;
+            const isVisible = visSet.has(node.id);
+            const c  = color(node);
+            const r  = nodeRadius(node);
             const isSel = selectedNode && selectedNode.id === node.id;
 
-            // Glow
-            ctx.shadowColor = c;
-            ctx.shadowBlur  = isSel ? 24 : 10;
+            // Dim non-visible nodes rather than hiding entirely
+            const alpha = isVisible ? 1 : 0.08;
+            ctx.globalAlpha = alpha;
 
-            // Fill
+            ctx.shadowColor = isVisible ? c : 'transparent';
+            ctx.shadowBlur  = isSel ? 28 : (isVisible ? 12 : 0);
+
             ctx.beginPath();
             ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-            ctx.fillStyle   = node.user_vote ? c + '33' : 'rgba(99,102,241,0.15)';
+            ctx.fillStyle   = node.user_vote ? c + '22' : 'rgba(99,102,241,0.1)';
             ctx.strokeStyle = c;
             ctx.lineWidth   = isSel ? 2.5 : 1.5;
             ctx.fill();
@@ -276,60 +298,60 @@ class NodeGraph {
             ctx.shadowBlur = 0;
 
             // Label
-            const words = (node.question || '').split(' ');
-            const label = words.slice(0, 4).join(' ') + (words.length > 4 ? '…' : '');
-            ctx.fillStyle  = 'rgba(226,232,240,0.85)';
-            ctx.font       = '10px -apple-system, sans-serif';
-            ctx.textAlign  = 'center';
-            ctx.fillText(label, node.x, node.y + r + 13);
+            if (isVisible) {
+                const words = (node.question || '').split(' ');
+                const label = words.slice(0, 4).join(' ') + (words.length > 4 ? '…' : '');
+                ctx.fillStyle = 'rgba(226,232,240,0.8)';
+                ctx.font      = `${Math.max(9, Math.min(12, r * 0.4))}px -apple-system, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText(label, node.x, node.y + r + 13);
+            }
 
-            // Vote indicator dot
-            if (node.user_vote) {
+            // Vote dot
+            if (node.user_vote && isVisible) {
                 ctx.beginPath();
-                ctx.arc(node.x + r - 4, node.y - r + 4, 5, 0, Math.PI * 2);
+                ctx.arc(node.x + r - 4, node.y - r + 4, 4, 0, Math.PI * 2);
                 ctx.fillStyle = c;
                 ctx.fill();
             }
+
+            ctx.globalAlpha = 1;
         }
 
         ctx.restore();
         this.dirty = false;
     }
 
-    // ── LOOP ───────────────────────────────────────────────────────────────
     loop() {
         this.tick();
-        if (this.dirty) this.draw();
-        this.raf = requestAnimationFrame(() => this.loop());
+        if (this.dirty) {
+            this.draw();
+            this.updateOverlay();
+        }
+        requestAnimationFrame(() => this.loop());
     }
 
-    // ── HIT TEST ───────────────────────────────────────────────────────────
     hitTest(clientX, clientY) {
         const rect = this.canvas.getBoundingClientRect();
-        const wx = (clientX - rect.left  - this.pan.x) / this.scale;
-        const wy = (clientY - rect.top   - this.pan.y) / this.scale;
-        for (const n of this.nodes) {
+        const wx = (clientX - rect.left - this.pan.x) / this.scale;
+        const wy = (clientY - rect.top  - this.pan.y) / this.scale;
+        const visible = getVisibleNodes(this.nodes);
+        for (const n of visible) {
             const dx = wx - n.x, dy = wy - n.y;
-            if (Math.sqrt(dx*dx + dy*dy) < 28) return n;
+            if (Math.sqrt(dx*dx + dy*dy) < nodeRadius(n) + 6) return n;
         }
         return null;
     }
 
-    // ── TOUCH / MOUSE EVENTS ───────────────────────────────────────────────
     bindEvents() {
         const c = this.canvas;
-
-        // Touch
         c.addEventListener('touchstart', (e) => {
             e.preventDefault();
             if (e.touches.length === 1) {
-                const t = e.touches[0];
+                const t   = e.touches[0];
                 const hit = this.hitTest(t.clientX, t.clientY);
-                if (hit) {
-                    openNodeModal(hit);
-                } else {
-                    this.drag = { startX: t.clientX, startY: t.clientY, panStart: { ...this.pan } };
-                }
+                if (hit) openNodeModal(hit);
+                else this.drag = { sx: t.clientX, sy: t.clientY, px: this.pan.x, py: this.pan.y };
             }
         }, { passive: false });
 
@@ -337,57 +359,44 @@ class NodeGraph {
             e.preventDefault();
             if (e.touches.length === 1 && this.drag) {
                 const t = e.touches[0];
-                this.pan.x = this.drag.panStart.x + (t.clientX - this.drag.startX);
-                this.pan.y = this.drag.panStart.y + (t.clientY - this.drag.startY);
+                this.pan.x = this.drag.px + (t.clientX - this.drag.sx);
+                this.pan.y = this.drag.py + (t.clientY - this.drag.sy);
                 this.dirty = true;
             }
         }, { passive: false });
 
-        c.addEventListener('touchend', () => { this.drag = null; });
-
-        // Mouse (for desktop testing)
+        c.addEventListener('touchend',  () => { this.drag = null; });
         c.addEventListener('mousedown', (e) => {
             const hit = this.hitTest(e.clientX, e.clientY);
-            if (hit) {
-                openNodeModal(hit);
-            } else {
-                this.drag = { startX: e.clientX, startY: e.clientY, panStart: { ...this.pan } };
-            }
+            if (hit) openNodeModal(hit);
+            else this.drag = { sx: e.clientX, sy: e.clientY, px: this.pan.x, py: this.pan.y };
         });
         c.addEventListener('mousemove', (e) => {
             if (this.drag) {
-                this.pan.x = this.drag.panStart.x + (e.clientX - this.drag.startX);
-                this.pan.y = this.drag.panStart.y + (e.clientY - this.drag.startY);
+                this.pan.x = this.drag.px + (e.clientX - this.drag.sx);
+                this.pan.y = this.drag.py + (e.clientY - this.drag.sy);
                 this.dirty = true;
             }
         });
-        c.addEventListener('mouseup', () => { this.drag = null; });
-
+        c.addEventListener('mouseup',   () => { this.drag = null; });
         window.addEventListener('resize', () => { this.resize(); this.dirty = true; });
     }
 }
 
 function initGraph() {
     graph = new NodeGraph('graph-canvas');
-    graph.updateEmpty();
 }
 
-async function loadGraphNodes() {
+async function loadAllNodes() {
     try {
-        const res  = await fetch(`/api/timeline/${currentUser}?vote_filter=all`);
+        const res  = await fetch(`/api/nodes/global?user_id=${encodeURIComponent(currentUser)}`);
         const data = await res.json();
-        const nodes = data.timeline || [];
-
-        // Also load vote info
-        for (const node of nodes) {
-            const voteRes  = await fetch(`/api/votes/${node.id}/${currentUser}`);
-            const voteData = await voteRes.json();
-            node.user_vote = voteData.vote;
+        for (const node of (data.nodes || [])) {
             graph.addNode(node);
-            graphNodes.push(node);
+            if (!graphNodes.find(n => n.id === node.id)) graphNodes.push(node);
         }
-    } catch (e) {
-        console.error('loadGraphNodes:', e);
+    } catch(e) {
+        console.error('loadAllNodes:', e);
     }
 }
 
@@ -396,6 +405,7 @@ async function loadGraphNodes() {
 // ══════════════════════════════════════════════════════════════════════════
 
 function sendPrompt(text) {
+    switchPanel('chat');
     document.getElementById('chat-input').value = text;
     sendMessage();
 }
@@ -405,15 +415,12 @@ async function sendMessage() {
     const text  = input.value.trim();
     if (!text) return;
 
-    input.value = '';
+    input.value    = '';
     input.disabled = true;
     document.getElementById('send-btn').disabled = true;
 
-    // Add user bubble
     appendMsg('user', text);
     chatHistory.push({ role: 'user', content: text });
-
-    // Add thinking indicator
     const thinkId = appendThinking();
 
     try {
@@ -426,21 +433,17 @@ async function sendMessage() {
 
         removeThinking(thinkId);
         chatHistory.push({ role: 'assistant', content: data.response });
-
         appendMsg('ai', data.response, data.nodes || []);
 
         // Add new nodes to graph
         for (const node of (data.nodes || [])) {
-            const voteRes  = await fetch(`/api/votes/${node.id}/${currentUser}`);
-            const voteData = await voteRes.json();
-            node.user_vote = voteData.vote;
             graph.addNode(node);
             if (!graphNodes.find(n => n.id === node.id)) graphNodes.push(node);
         }
 
-    } catch (e) {
+    } catch(e) {
         removeThinking(thinkId);
-        appendMsg('ai', 'Connection error. Is the server running?', []);
+        appendMsg('ai', 'Connection error.', []);
     }
 
     input.disabled  = false;
@@ -449,9 +452,8 @@ async function sendMessage() {
 }
 
 function appendMsg(role, text, nodes) {
-    const feed = document.getElementById('chat-messages');
-
-    const wrap = document.createElement('div');
+    const feed   = document.getElementById('chat-messages');
+    const wrap   = document.createElement('div');
     wrap.className = 'msg ' + role;
 
     const bubble = document.createElement('div');
@@ -460,31 +462,27 @@ function appendMsg(role, text, nodes) {
     wrap.appendChild(bubble);
 
     if (nodes && nodes.length > 0) {
-        const nodeWrap = document.createElement('div');
-        nodeWrap.className = 'msg-nodes';
-
+        const nw = document.createElement('div');
+        nw.className = 'msg-nodes';
         for (const n of nodes) {
             const pill = document.createElement('div');
             pill.className = 'node-pill';
-            pill.innerHTML = `
-                <span class="node-pill-dot"></span>
+            pill.innerHTML = `<span class="node-pill-dot"></span>
                 <span class="node-pill-text">${n.question}</span>
-                <span class="node-pill-arrow">→ vote</span>
-            `;
+                <span class="node-pill-arrow">→ vote</span>`;
             pill.onclick = () => openNodeModal(n);
-            nodeWrap.appendChild(pill);
+            nw.appendChild(pill);
         }
-        wrap.appendChild(nodeWrap);
+        wrap.appendChild(nw);
     }
 
     feed.appendChild(wrap);
     feed.scrollTop = feed.scrollHeight;
-    return wrap;
 }
 
-let thinkCounter = 0;
+let _thinkN = 0;
 function appendThinking() {
-    const id = 'think-' + (++thinkCounter);
+    const id   = 'think-' + (++_thinkN);
     const feed = document.getElementById('chat-messages');
     const wrap = document.createElement('div');
     wrap.className = 'msg ai ai-thinking';
@@ -505,31 +503,24 @@ function removeThinking(id) {
 
 function openNodeModal(node) {
     selectedNode = node;
-
     document.getElementById('modal-text').textContent    = node.question || '';
     document.getElementById('modal-context').textContent = node.context  || '';
 
-    // Tally
-    const counts = node.vote_counts || { yes: 0, no: 0 };
-    const maybe  = counts.maybe || 0;
+    const vc    = node.vote_counts || {};
+    const maybe = vc.maybe || 0;
     document.getElementById('modal-tally').textContent =
-        `${counts.yes || 0} true · ${maybe} perhaps · ${counts.no || 0} false`;
-
-    // Highlight current vote
-    document.querySelectorAll('.v-btn').forEach(b => b.style.opacity = '1');
-    if (node.user_vote === 'yes')   document.querySelector('.v-true').style.opacity  = '1';
-    if (node.user_vote === 'maybe') document.querySelector('.v-maybe').style.opacity = '1';
-    if (node.user_vote === 'no')    document.querySelector('.v-false').style.opacity  = '1';
+        `${vc.yes || 0} true · ${maybe} perhaps · ${vc.no || 0} false  ·  ${totalVotes(node)} total`;
 
     document.getElementById('node-modal').classList.add('open');
+    if (graph) graph.dirty = true;
 }
 
 function closeModal() {
     document.getElementById('node-modal').classList.remove('open');
     selectedNode = null;
+    if (graph) graph.dirty = true;
 }
 
-// Close modal on backdrop tap
 document.getElementById('node-modal').addEventListener('click', (e) => {
     if (e.target === document.getElementById('node-modal')) closeModal();
 });
@@ -546,45 +537,38 @@ async function castVote(vote) {
         const data = await res.json();
 
         if (data.success) {
-            // Update local node
-            selectedNode.user_vote  = vote;
+            selectedNode.user_vote   = vote;
             selectedNode.vote_counts = data.vote_counts;
             graph.updateNode(selectedNode);
 
-            // Update graphNodes list
             const n = graphNodes.find(n => n.id === selectedNode.id);
             if (n) { n.user_vote = vote; n.vote_counts = data.vote_counts; }
 
             closeModal();
-            if (document.getElementById('tab-timeline').classList.contains('active')) {
-                loadTimeline();
-            }
+            renderTimeline();
         }
-    } catch (e) {
-        console.error('castVote:', e);
-    }
+    } catch(e) { console.error('castVote:', e); }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
 // TIMELINE
 // ══════════════════════════════════════════════════════════════════════════
 
-async function loadTimeline() {
-    const list = document.getElementById('timeline-list');
-    list.innerHTML = '';
-
+function renderTimeline() {
+    const list      = document.getElementById('timeline-list');
     const trueNodes = graphNodes.filter(n => n.user_vote === 'yes');
 
     if (trueNodes.length === 0) {
-        list.innerHTML = '<div class="timeline-empty">No TRUE votes yet.<br>Chat with the AI, then vote TRUE on statements you believe.</div>';
+        list.innerHTML = '<div class="timeline-empty">No TRUE votes yet.<br>Chat with the AI, then tap a node to vote.</div>';
         return;
     }
 
+    list.innerHTML = '';
     for (const node of trueNodes) {
         const el = document.createElement('div');
-        el.className = 'timeline-node';
+        el.className   = 'timeline-node';
         el.textContent = node.question;
-        el.onclick = () => openNodeModal(node);
+        el.onclick     = () => openNodeModal(node);
         list.appendChild(el);
     }
 }

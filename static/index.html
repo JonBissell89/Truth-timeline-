@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Truth Timeline</title>
-    <link rel="stylesheet" href="/static/style.css?v=5">
+    <link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
 
-    <!-- Login Screen -->
+    <!-- Login -->
     <div id="login-screen" class="screen active">
         <div class="login-wrap">
             <div class="login-glyph">⬡</div>
@@ -18,70 +18,78 @@
                 onkeydown="if(event.key==='Enter') login()" />
             <p class="login-label">Choose your AI</p>
             <div id="provider-list" class="provider-list">
-                <div class="provider-loading">Loading AI options…</div>
+                <div class="provider-loading">Loading…</div>
             </div>
             <button onclick="login()">Begin</button>
         </div>
     </div>
 
-    <!-- App -->
+    <!-- Dashboard — single page, no tabs -->
     <div id="app-screen" class="screen">
 
-        <!-- GRAPH TAB -->
-        <div id="tab-graph" class="tab active">
+        <!-- Filter Bar -->
+        <div class="filter-bar">
+            <div class="filter-chips" id="filter-chips">
+                <button class="chip active" data-filter="all"     onclick="setFilter('all')">All</button>
+                <button class="chip"        data-filter="true"    onclick="setFilter('true')">✓ True</button>
+                <button class="chip"        data-filter="false"   onclick="setFilter('false')">✗ False</button>
+                <button class="chip"        data-filter="perhaps" onclick="setFilter('perhaps')">≈ Perhaps</button>
+                <button class="chip"        data-filter="hot"     onclick="setFilter('hot')">🔥 Hot</button>
+            </div>
+            <div id="user-tag" class="user-tag"></div>
+        </div>
+
+        <!-- Graph -->
+        <div id="graph-area" class="graph-area">
             <canvas id="graph-canvas"></canvas>
             <div id="graph-empty" class="graph-empty hidden">
-                <p>Your truth graph is empty.</p>
-                <p>Go to <strong>Chat</strong> and start a conversation.</p>
+                <p>Graph is empty.</p>
+                <p>Chat below to start.</p>
             </div>
             <div id="graph-info" class="graph-info"></div>
         </div>
 
-        <!-- CHAT TAB -->
-        <div id="tab-chat" class="tab">
-            <div id="chat-header" class="chat-header"></div>
-            <div id="chat-messages" class="chat-messages">
-                <div class="chat-welcome">
-                    <p>Ask any question. The AI's statements become nodes in your truth graph.</p>
-                    <div class="sample-prompts">
-                        <button onclick="sendPrompt('Does consciousness exist?')">Does consciousness exist?</button>
-                        <button onclick="sendPrompt('What is reality?')">What is reality?</button>
-                        <button onclick="sendPrompt('Do I exist?')">Do I exist?</button>
+        <!-- Bottom Panel: Chat + Timeline -->
+        <div class="bottom-panel">
+
+            <div class="panel-header">
+                <button class="panel-tab active" data-panel="chat" onclick="switchPanel('chat')">
+                    ◎ Chat
+                </button>
+                <button class="panel-tab" data-panel="timeline" onclick="switchPanel('timeline')">
+                    ◈ Timeline
+                </button>
+                <div id="ai-indicator" class="ai-indicator"></div>
+            </div>
+
+            <!-- Chat -->
+            <div id="panel-chat" class="panel-content active">
+                <div id="chat-messages" class="chat-messages">
+                    <div class="chat-welcome">
+                        <p>Ask anything — AI statements become graph nodes.</p>
+                        <div class="sample-prompts">
+                            <button onclick="sendPrompt('Does consciousness exist?')">Does consciousness exist?</button>
+                            <button onclick="sendPrompt('What is reality?')">What is reality?</button>
+                            <button onclick="sendPrompt('Do I exist?')">Do I exist?</button>
+                        </div>
                     </div>
                 </div>
+                <div class="chat-bar">
+                    <input id="chat-input" type="text" placeholder="Ask anything…" autocomplete="off"
+                        onkeydown="if(event.key==='Enter') sendMessage()" />
+                    <button id="send-btn" onclick="sendMessage()">→</button>
+                </div>
             </div>
-            <div class="chat-bar">
-                <input id="chat-input" type="text" placeholder="Ask anything..." autocomplete="off"
-                    onkeydown="if(event.key==='Enter') sendMessage()" />
-                <button id="send-btn" onclick="sendMessage()">→</button>
+
+            <!-- Timeline -->
+            <div id="panel-timeline" class="panel-content">
+                <div class="timeline-scroll">
+                    <p class="panel-subtitle">Statements you voted TRUE</p>
+                    <div id="timeline-list"></div>
+                </div>
             </div>
+
         </div>
-
-        <!-- TIMELINE TAB -->
-        <div id="tab-timeline" class="tab">
-            <div class="tab-scroll">
-                <h2>Your Truth Path</h2>
-                <p class="dim">Statements you voted TRUE</p>
-                <div id="timeline-list" style="margin-top:1rem;"></div>
-            </div>
-        </div>
-
-        <!-- Bottom Nav -->
-        <nav class="nav">
-            <button class="nav-btn active" data-tab="graph" onclick="switchTab('graph')">
-                <span class="nav-ico">◉</span>
-                <span>Graph</span>
-            </button>
-            <button class="nav-btn" data-tab="chat" onclick="switchTab('chat')">
-                <span class="nav-ico">◎</span>
-                <span>Chat</span>
-            </button>
-            <button class="nav-btn" data-tab="timeline" onclick="switchTab('timeline')">
-                <span class="nav-ico">◈</span>
-                <span>Timeline</span>
-            </button>
-        </nav>
-
     </div>
 
     <!-- Node Modal -->
@@ -89,19 +97,16 @@
         <div class="modal-card">
             <button class="modal-close" onclick="closeModal()">✕</button>
             <div class="modal-statement" id="modal-text"></div>
-            <div class="modal-context" id="modal-context"></div>
-            <div class="modal-tally" id="modal-tally"></div>
+            <div class="modal-context"   id="modal-context"></div>
+            <div class="modal-tally"     id="modal-tally"></div>
             <div class="vote-row">
-                <button class="v-btn v-true" onclick="castVote('yes')">TRUE</button>
+                <button class="v-btn v-true"  onclick="castVote('yes')">TRUE</button>
                 <button class="v-btn v-maybe" onclick="castVote('maybe')">PERHAPS</button>
                 <button class="v-btn v-false" onclick="castVote('no')">FALSE</button>
             </div>
         </div>
     </div>
 
-    <!-- Spinner -->
-    <div id="spinner" class="spinner hidden"></div>
-
-    <script src="/static/app.js?v=5"></script>
+    <script src="/static/app.js?v=6"></script>
 </body>
 </html>

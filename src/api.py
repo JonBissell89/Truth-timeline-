@@ -148,6 +148,17 @@ def _parse_ai_content(content, user_id):
     return main_response, created_nodes
 
 
+@app.get("/api/nodes/global")
+async def get_global_nodes(user_id: Optional[str] = None):
+    """All nodes in the system with vote counts and user's vote."""
+    results = db.search_definitions(term='', scope=None, user_id=user_id)
+    for r in results:
+        r['vote_counts'] = db.get_vote_count(r['id'])
+        if user_id:
+            r['user_vote'] = db.get_vote(r['id'], user_id)
+    return {"nodes": results}
+
+
 @app.get("/api/providers")
 async def get_providers():
     """Return which AI providers are configured (keys set)."""
