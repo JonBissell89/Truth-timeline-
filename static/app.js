@@ -37,8 +37,8 @@ async function loadProviders() {
 }
 
 function renderProviders(providers) {
-    const list      = document.getElementById('provider-list');
-    const savedProv = storageGet('ttProvider') || 'auto';
+    const list       = document.getElementById('provider-list');
+    const savedProv  = storageGet('ttProvider') || 'auto';
     const firstAvail = providers.find(p => p.available);
     const defaultId  = (savedProv !== 'auto') ? savedProv : (firstAvail ? firstAvail.id : 'auto');
     currentProvider  = defaultId;
