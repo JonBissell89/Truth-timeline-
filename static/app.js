@@ -1,606 +1,514 @@
-// Truth Timeline - Main Application Logic
-
-// Global state
+// ── STATE ──────────────────────────────────────────────────────────────────
 let currentUser = null;
-let currentNodeId = null;
-let currentTerm = null;
+let selectedNode = null;
+let chatHistory = [];  // [{role, content}]
+let graphNodes = [];   // all nodes loaded into the graph
+let graph = null;
 
-// Safe localStorage helpers (blocked in some iframe contexts)
-function storageGet(key) {
-    try { return localStorage.getItem(key); } catch(e) { return null; }
-}
-function storageSet(key, value) {
-    try { localStorage.setItem(key, value); } catch(e) {}
-}
-function storageRemove(key) {
-    try { localStorage.removeItem(key); } catch(e) {}
-}
+// ── STORAGE HELPERS ────────────────────────────────────────────────────────
+function storageGet(k)    { try { return localStorage.getItem(k); }      catch(e) { return null; } }
+function storageSet(k, v) { try { localStorage.setItem(k, v); }          catch(e) {} }
+function storageRemove(k) { try { localStorage.removeItem(k); }          catch(e) {} }
 
-// Initialize app on load
+// ── INIT ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    // Check for saved user
-    const savedUser = storageGet('truthTimelineUser');
-    if (savedUser) {
-        currentUser = savedUser;
-        showAppScreen();
-    } else {
-        loadGlobalStats();
+    const saved = storageGet('ttUser');
+    if (saved) {
+        currentUser = saved;
+        startApp();
     }
 });
 
-// Authentication
+// ── LOGIN ──────────────────────────────────────────────────────────────────
 function login() {
-    const username = document.getElementById('username-input').value.trim();
-    if (!username) {
-        showToast('Please enter a username', 'error');
-        return;
+    const name = document.getElementById('username-input').value.trim();
+    if (!name) return;
+    currentUser = name;
+    storageSet('ttUser', name);
+    startApp();
+}
+
+function startApp() {
+    const ls = document.getElementById('login-screen');
+    const as = document.getElementById('app-screen');
+    ls.style.display = 'none';
+    ls.classList.remove('active');
+    as.style.display = 'flex';
+    as.classList.add('active');
+
+    initGraph();
+    loadGraphNodes();
+}
+
+// ── TABS ───────────────────────────────────────────────────────────────────
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    document.querySelector(`.nav-btn[data-tab="${name}"]`).classList.add('active');
+
+    if (name === 'graph') {
+        if (graph) { graph.resize(); graph.draw(); }
     }
-
-    currentUser = username;
-    storageSet('truthTimelineUser', username);
-    showAppScreen();
-}
-
-function logout() {
-    currentUser = null;
-    storageRemove('truthTimelineUser');
-    document.getElementById('login-screen').classList.add('active');
-    document.getElementById('app-screen').classList.remove('active');
-}
-
-function showAppScreen() {
-    const loginScreen = document.getElementById('login-screen');
-    const appScreen = document.getElementById('app-screen');
-    loginScreen.style.display = 'none';
-    appScreen.style.display = 'block';
-    loginScreen.classList.remove('active');
-    appScreen.classList.add('active');
-    document.getElementById('current-user').textContent = '👤 ' + currentUser;
-    showView('home');
-}
-
-// View Navigation
-function showView(viewName) {
-    // Update nav buttons
-    document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    document.querySelector(`[data-view="${viewName}"]`).classList.add('active');
-
-    // Update views
-    document.querySelectorAll('.view').forEach(view => {
-        view.classList.remove('active');
-    });
-    document.getElementById(`${viewName}-view`).classList.add('active');
-
-    // Load view data
-    if (viewName === 'timeline') {
+    if (name === 'timeline') {
         loadTimeline();
     }
 }
 
-// Define Term Flow
-async function searchTerm() {
-    const term = document.getElementById('term-input').value.trim();
-    if (!term) {
-        showToast('Please enter a term', 'error');
-        return;
+// ══════════════════════════════════════════════════════════════════════════
+// GRAPH ENGINE
+// ══════════════════════════════════════════════════════════════════════════
+
+class NodeGraph {
+    constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx    = this.canvas.getContext('2d');
+        this.nodes  = [];
+        this.pan    = { x: 0, y: 0 };
+        this.scale  = 1;
+        this.drag   = null;   // { startX, startY, panStart }
+        this.raf    = null;
+        this.dirty  = true;
+
+        this.resize();
+        this.bindEvents();
+        this.loop();
     }
 
-    currentTerm = term;
-    showLoading(true);
-
-    try {
-        const response = await fetch('/api/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ term, user_id: currentUser })
-        });
-
-        const data = await response.json();
-        displaySearchResults(data.results, term);
-    } catch (error) {
-        showToast('Error searching for term', 'error');
-        console.error(error);
-    } finally {
-        showLoading(false);
-    }
-}
-
-function displaySearchResults(results, term) {
-    const container = document.getElementById('search-results');
-
-    if (results.length === 0) {
-        container.innerHTML = `
-            <div class="card">
-                <p>❌ No definitions found for "${term}"</p>
-                <p style="color: var(--text-dim); margin: 1rem 0;">We need to create one.</p>
-                <button onclick="showCreateModal('${term}')" class="btn-primary">
-                    Create Definition
-                </button>
-            </div>
-        `;
-        return;
+    resize() {
+        const tab = document.getElementById('tab-graph');
+        this.canvas.width  = tab.clientWidth  || window.innerWidth;
+        this.canvas.height = tab.clientHeight || (window.innerHeight - 56);
     }
 
-    // Check if user already defined this term
-    const userDefinition = results.find(r => r.scope === `personal:${currentUser}`);
-
-    if (userDefinition) {
-        container.innerHTML = `
-            <div class="card">
-                <p>✓ You already defined "${term}":</p>
-                ${renderNode(userDefinition)}
-            </div>
-        `;
-        return;
-    }
-
-    // Show community definitions
-    let html = `
-        <div class="card">
-            <p>📚 Found ${results.length} community definition(s):</p>
-        </div>
-    `;
-
-    results.forEach(node => {
-        html += renderNode(node);
-    });
-
-    html += `
-        <div class="card">
-            <button onclick="showCreateModal('${term}')" class="btn-primary">
-                Create Custom Definition
-            </button>
-        </div>
-    `;
-
-    container.innerHTML = html;
-}
-
-// Word Classification
-function getTierBadge(tier) {
-    const icons = {
-        'primitive': '🔵',
-        'functional': '⚪',
-        'concrete': '🟢',
-        'derived': '🟡',
-        'subjective': '🔴'
-    };
-
-    const labels = {
-        'primitive': 'Primitive',
-        'functional': 'Functional',
-        'concrete': 'Concrete',
-        'derived': 'Derived',
-        'subjective': 'Subjective'
-    };
-
-    return `
-        <span class="tier-badge tier-${tier}">
-            <span class="tier-badge-icon">${icons[tier] || '⚪'}</span>
-            ${labels[tier] || tier}
-        </span>
-    `;
-}
-
-async function classifyWord(word) {
-    try {
-        const response = await fetch(`/api/words/classify/${encodeURIComponent(word)}`);
-        return await response.json();
-    } catch (error) {
-        console.error('Error classifying word:', error);
-        return { tier: 'derived', type: 'unknown', needs_definition: true };
-    }
-}
-
-async function checkCircular(term, question) {
-    try {
-        const response = await fetch('/api/words/check-circular', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ term, question })
-        });
-        return await response.json();
-    } catch (error) {
-        console.error('Error checking circular:', error);
-        return { is_circular: false };
-    }
-}
-
-// Create Definition
-async function showCreateModal(term) {
-    currentTerm = term;
-    document.getElementById('create-term').textContent = term;
-
-    showLoading(true);
-
-    try {
-        // Classify the word first
-        const classification = await classifyWord(term);
-
-        // Show tier information
-        let tierInfo = '';
-        if (classification.tier === 'primitive') {
-            tierInfo = `
-                <div class="info-box" style="margin-bottom: 1rem;">
-                    ${getTierBadge('primitive')}
-                    <p style="margin-top: 0.5rem; color: var(--text-dim);">
-                        This is a <strong>primitive</strong> term - a foundational concept that cannot be broken down further.
-                        Most people understand "${term}" through direct experience.
-                    </p>
-                </div>
-            `;
-        } else if (classification.tier === 'subjective') {
-            tierInfo = `
-                <div class="info-box" style="margin-bottom: 1rem; border-color: var(--danger);">
-                    ${getTierBadge('subjective')}
-                    <p style="margin-top: 0.5rem; color: var(--text-dim);">
-                        This is a <strong>subjective</strong> term - it means different things to different people.
-                        Your definition will be personal to your timeline.
-                    </p>
-                </div>
-            `;
-        } else if (classification.tier === 'derived') {
-            tierInfo = `
-                <div class="info-box" style="margin-bottom: 1rem;">
-                    ${getTierBadge('derived')}
-                    <p style="margin-top: 0.5rem; color: var(--text-dim);">
-                        This is a <strong>derived</strong> term - try to break it down into simpler words.
-                        Best definitions use foundational primitives.
-                    </p>
-                </div>
-            `;
-        }
-
-        // Get AI suggestions
-        const response = await fetch('/api/ai/suggest', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ term, count: 3 })
-        });
-
-        const data = await response.json();
-
-        // Update modal with tier info
-        const modalContent = document.querySelector('#create-modal .modal-content');
-        const existingTierInfo = modalContent.querySelector('.tier-info');
-        if (existingTierInfo) {
-            existingTierInfo.remove();
-        }
-
-        const h3 = modalContent.querySelector('h3');
-        if (tierInfo) {
-            h3.insertAdjacentHTML('afterend', `<div class="tier-info">${tierInfo}</div>`);
-        }
-
-        displayAISuggestions(data.suggestions);
-    } catch (error) {
-        console.error('Error in showCreateModal:', error);
-    } finally {
-        showLoading(false);
-    }
-
-    document.getElementById('create-modal').classList.add('active');
-}
-
-function displayAISuggestions(suggestions) {
-    const container = document.getElementById('ai-suggestions');
-    let html = '<p style="margin-bottom: 1rem;">🤖 AI Suggestions:</p>';
-
-    suggestions.forEach((suggestion, index) => {
-        html += `
-            <button class="suggestion-btn" onclick="selectSuggestion('${escapequotes(suggestion)}')">
-                ${suggestion}
-            </button>
-        `;
-    });
-
-    container.innerHTML = html;
-}
-
-function escapequotes(str) {
-    return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-}
-
-async function selectSuggestion(question) {
-    await createDefinition(question);
-}
-
-async function createCustomDefinition() {
-    const question = document.getElementById('custom-question-input').value.trim();
-    if (!question) {
-        showToast('Please enter a question', 'error');
-        return;
-    }
-
-    await createDefinition(question);
-}
-
-async function createDefinition(question) {
-    showLoading(true);
-
-    try {
-        // Check for circular definition
-        const circularCheck = await checkCircular(currentTerm, question);
-
-        if (circularCheck.is_circular) {
-            showLoading(false);
-            showToast(`⚠️ Circular definition detected: ${circularCheck.reason}`, 'error');
+    // ── ADD / UPDATE NODES ─────────────────────────────────────────────────
+    addNode(nodeData) {
+        if (this.nodes.find(n => n.id === nodeData.id)) {
+            this.updateNode(nodeData);
             return;
         }
+        const cx = this.canvas.width  / 2;
+        const cy = this.canvas.height / 2;
+        const angle = Math.random() * Math.PI * 2;
+        const r     = 80 + Math.random() * 120;
+        nodeData.x  = cx + Math.cos(angle) * r;
+        nodeData.y  = cy + Math.sin(angle) * r;
+        nodeData.vx = (Math.random() - 0.5) * 2;
+        nodeData.vy = (Math.random() - 0.5) * 2;
+        this.nodes.push(nodeData);
+        this.dirty = true;
+        this.updateEmpty();
+    }
 
-        // Create node
-        const response = await fetch('/api/nodes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                question,
-                user_id: currentUser,
-                defining_terms: [currentTerm],
-                using_terms: extractTerms(question),
-                scope: `personal:${currentUser}`
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            closeModal();
-            showToast('Definition created!', 'success');
-
-            // Show vote modal
-            currentNodeId = data.node.id;
-            showVoteModal(data.node);
+    updateNode(nodeData) {
+        const idx = this.nodes.findIndex(n => n.id === nodeData.id);
+        if (idx >= 0) {
+            const { x, y, vx, vy } = this.nodes[idx];
+            this.nodes[idx] = { ...nodeData, x, y, vx, vy };
+            this.dirty = true;
         }
-    } catch (error) {
-        showToast('Error creating definition', 'error');
-        console.error(error);
-    } finally {
-        showLoading(false);
-    }
-}
-
-function extractTerms(question) {
-    // Simple term extraction
-    const words = question.toLowerCase().match(/\b[a-z]+\b/g) || [];
-    const common = new Set(['is', 'are', 'the', 'a', 'an', 'of', 'to', 'in', 'for', 'on', 'at', 'by', 'with', 'from', 'as', 'into', 'that', 'this']);
-    return [...new Set(words.filter(w => !common.has(w)))];
-}
-
-// Voting
-function showVoteModal(node) {
-    currentNodeId = node.id;
-
-    document.getElementById('modal-question').textContent = node.question;
-
-    const definingTerms = JSON.parse(node.defining_terms || '[]');
-    if (definingTerms.length > 0) {
-        document.getElementById('modal-defines').innerHTML =
-            `<span class="defines-tag">Defines: ${definingTerms.join(', ')}</span>`;
-    } else {
-        document.getElementById('modal-defines').innerHTML = '';
     }
 
-    const voteCounts = node.vote_counts || { yes: 0, no: 0 };
-    document.getElementById('modal-votes').textContent =
-        `👥 ${voteCounts.yes} yes, ${voteCounts.no} no`;
+    updateEmpty() {
+        const el = document.getElementById('graph-empty');
+        if (el) el.classList.toggle('hidden', this.nodes.length > 0);
+        const info = document.getElementById('graph-info');
+        if (info) info.textContent = this.nodes.length > 0 ? `${this.nodes.length} node${this.nodes.length !== 1 ? 's' : ''}` : '';
+    }
 
-    document.getElementById('vote-modal').classList.add('active');
-}
+    // ── PHYSICS ────────────────────────────────────────────────────────────
+    tick() {
+        if (this.nodes.length < 2) return;
+        const cx = this.canvas.width  / 2;
+        const cy = this.canvas.height / 2;
 
-async function voteOnNode(vote) {
-    showLoading(true);
+        for (let i = 0; i < this.nodes.length; i++) {
+            const a = this.nodes[i];
 
-    try {
-        const response = await fetch('/api/votes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                node_id: currentNodeId,
-                user_id: currentUser,
-                vote
-            })
-        });
+            // Gentle pull toward center
+            a.vx += (cx - a.x) * 0.0008;
+            a.vy += (cy - a.y) * 0.0008;
 
-        const data = await response.json();
+            for (let j = i + 1; j < this.nodes.length; j++) {
+                const b  = this.nodes[j];
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                const d  = Math.sqrt(dx * dx + dy * dy) || 1;
+                const f  = Math.min(4000 / (d * d), 8);
+                const fx = (dx / d) * f;
+                const fy = (dy / d) * f;
+                a.vx -= fx;  a.vy -= fy;
+                b.vx += fx;  b.vy += fy;
+            }
 
-        if (data.success) {
-            closeModal();
-            showToast(`Voted ${vote.toUpperCase()}!`, 'success');
+            a.vx *= 0.85;
+            a.vy *= 0.85;
+            a.x  += a.vx;
+            a.y  += a.vy;
+        }
+        this.dirty = true;
+    }
 
-            // Refresh current view
-            const activeView = document.querySelector('.view.active').id;
-            if (activeView === 'timeline-view') {
-                loadTimeline();
-            } else if (activeView === 'define-view') {
-                searchTerm();
+    // ── DRAW ───────────────────────────────────────────────────────────────
+    draw() {
+        const { ctx, canvas, pan, scale } = this;
+        const w = canvas.width, h = canvas.height;
+
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = '#07080f';
+        ctx.fillRect(0, 0, w, h);
+
+        // Starfield
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        const seed = 42;
+        for (let i = 0; i < 60; i++) {
+            const sx = ((seed * (i * 7 + 3) * 1234567) % w + w) % w;
+            const sy = ((seed * (i * 11 + 5) * 7654321) % h + h) % h;
+            ctx.fillRect(sx, sy, 1, 1);
+        }
+
+        ctx.save();
+        ctx.translate(pan.x, pan.y);
+        ctx.scale(scale, scale);
+
+        const nodeColor = (n) => {
+            if (n.user_vote === 'yes')   return '#34d399';
+            if (n.user_vote === 'no')    return '#f87171';
+            if (n.user_vote === 'maybe') return '#fbbf24';
+            return '#6366f1';
+        };
+
+        // Draw nodes
+        for (const node of this.nodes) {
+            const c  = nodeColor(node);
+            const r  = 22;
+            const isSel = selectedNode && selectedNode.id === node.id;
+
+            // Glow
+            ctx.shadowColor = c;
+            ctx.shadowBlur  = isSel ? 24 : 10;
+
+            // Fill
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+            ctx.fillStyle   = node.user_vote ? c + '33' : 'rgba(99,102,241,0.15)';
+            ctx.strokeStyle = c;
+            ctx.lineWidth   = isSel ? 2.5 : 1.5;
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.shadowBlur = 0;
+
+            // Label
+            const words = (node.question || '').split(' ');
+            const label = words.slice(0, 4).join(' ') + (words.length > 4 ? '…' : '');
+            ctx.fillStyle  = 'rgba(226,232,240,0.85)';
+            ctx.font       = '10px -apple-system, sans-serif';
+            ctx.textAlign  = 'center';
+            ctx.fillText(label, node.x, node.y + r + 13);
+
+            // Vote indicator dot
+            if (node.user_vote) {
+                ctx.beginPath();
+                ctx.arc(node.x + r - 4, node.y - r + 4, 5, 0, Math.PI * 2);
+                ctx.fillStyle = c;
+                ctx.fill();
             }
         }
-    } catch (error) {
-        showToast('Error voting', 'error');
-        console.error(error);
-    } finally {
-        showLoading(false);
+
+        ctx.restore();
+        this.dirty = false;
     }
-}
 
-// Timeline
-async function loadTimeline() {
-    showLoading(true);
+    // ── LOOP ───────────────────────────────────────────────────────────────
+    loop() {
+        this.tick();
+        if (this.dirty) this.draw();
+        this.raf = requestAnimationFrame(() => this.loop());
+    }
 
-    try {
-        const response = await fetch(`/api/timeline/${currentUser}`);
-        const data = await response.json();
-
-        displayTimeline(data.timeline);
-
-        // Check for orphaned nodes
-        const orphanedResponse = await fetch(`/api/orphaned/${currentUser}`);
-        const orphanedData = await orphanedResponse.json();
-
-        if (orphanedData.orphaned.length > 0) {
-            displayOrphanedWarning(orphanedData.orphaned);
-        } else {
-            document.getElementById('orphaned-warning').innerHTML = '';
+    // ── HIT TEST ───────────────────────────────────────────────────────────
+    hitTest(clientX, clientY) {
+        const rect = this.canvas.getBoundingClientRect();
+        const wx = (clientX - rect.left  - this.pan.x) / this.scale;
+        const wy = (clientY - rect.top   - this.pan.y) / this.scale;
+        for (const n of this.nodes) {
+            const dx = wx - n.x, dy = wy - n.y;
+            if (Math.sqrt(dx*dx + dy*dy) < 28) return n;
         }
-    } catch (error) {
-        showToast('Error loading timeline', 'error');
-        console.error(error);
-    } finally {
-        showLoading(false);
-    }
-}
-
-function displayTimeline(timeline) {
-    const container = document.getElementById('timeline-list');
-
-    if (timeline.length === 0) {
-        container.innerHTML = `
-            <div class="timeline-empty">
-                <p>📭 Your timeline is empty</p>
-                <p style="margin-top: 1rem; color: var(--text-dim);">
-                    Start by defining fundamental terms!
-                </p>
-                <button onclick="showView('define')" class="btn-primary" style="margin-top: 1rem;">
-                    Define Your First Term
-                </button>
-            </div>
-        `;
-        return;
+        return null;
     }
 
-    let html = '';
-    timeline.forEach(node => {
-        html += renderNode(node, true);
-    });
+    // ── TOUCH / MOUSE EVENTS ───────────────────────────────────────────────
+    bindEvents() {
+        const c = this.canvas;
 
-    container.innerHTML = html;
-}
+        // Touch
+        c.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (e.touches.length === 1) {
+                const t = e.touches[0];
+                const hit = this.hitTest(t.clientX, t.clientY);
+                if (hit) {
+                    openNodeModal(hit);
+                } else {
+                    this.drag = { startX: t.clientX, startY: t.clientY, panStart: { ...this.pan } };
+                }
+            }
+        }, { passive: false });
 
-function displayOrphanedWarning(orphaned) {
-    const container = document.getElementById('orphaned-warning');
-    container.innerHTML = `
-        <div class="warning-box">
-            <h4>⚠️ ${orphaned.length} Orphaned Node(s) Detected!</h4>
-            <p style="color: var(--text-dim); margin-top: 0.5rem;">
-                These nodes are no longer reachable due to changed votes.
-            </p>
-        </div>
-    `;
-}
+        c.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (e.touches.length === 1 && this.drag) {
+                const t = e.touches[0];
+                this.pan.x = this.drag.panStart.x + (t.clientX - this.drag.startX);
+                this.pan.y = this.drag.panStart.y + (t.clientY - this.drag.startY);
+                this.dirty = true;
+            }
+        }, { passive: false });
 
-// Search
-async function performSearch() {
-    const term = document.getElementById('search-input').value.trim();
-    if (!term) {
-        showToast('Please enter a search term', 'error');
-        return;
-    }
+        c.addEventListener('touchend', () => { this.drag = null; });
 
-    showLoading(true);
-
-    try {
-        const response = await fetch('/api/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ term, user_id: currentUser })
+        // Mouse (for desktop testing)
+        c.addEventListener('mousedown', (e) => {
+            const hit = this.hitTest(e.clientX, e.clientY);
+            if (hit) {
+                openNodeModal(hit);
+            } else {
+                this.drag = { startX: e.clientX, startY: e.clientY, panStart: { ...this.pan } };
+            }
         });
+        c.addEventListener('mousemove', (e) => {
+            if (this.drag) {
+                this.pan.x = this.drag.panStart.x + (e.clientX - this.drag.startX);
+                this.pan.y = this.drag.panStart.y + (e.clientY - this.drag.startY);
+                this.dirty = true;
+            }
+        });
+        c.addEventListener('mouseup', () => { this.drag = null; });
 
-        const data = await response.json();
-        displaySearchList(data.results, term);
-    } catch (error) {
-        showToast('Error searching', 'error');
-        console.error(error);
-    } finally {
-        showLoading(false);
+        window.addEventListener('resize', () => { this.resize(); this.dirty = true; });
     }
 }
 
-function displaySearchList(results, term) {
-    const container = document.getElementById('search-results-list');
+function initGraph() {
+    graph = new NodeGraph('graph-canvas');
+    graph.updateEmpty();
+}
 
-    if (results.length === 0) {
-        container.innerHTML = `
-            <div class="card">
-                <p>❌ No definitions found for "${term}"</p>
-            </div>
-        `;
+async function loadGraphNodes() {
+    try {
+        const res  = await fetch(`/api/timeline/${currentUser}?vote_filter=all`);
+        const data = await res.json();
+        const nodes = data.timeline || [];
+
+        // Also load vote info
+        for (const node of nodes) {
+            const voteRes  = await fetch(`/api/votes/${node.id}/${currentUser}`);
+            const voteData = await voteRes.json();
+            node.user_vote = voteData.vote;
+            graph.addNode(node);
+            graphNodes.push(node);
+        }
+    } catch (e) {
+        console.error('loadGraphNodes:', e);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// CHAT
+// ══════════════════════════════════════════════════════════════════════════
+
+function sendPrompt(text) {
+    document.getElementById('chat-input').value = text;
+    sendMessage();
+}
+
+async function sendMessage() {
+    const input = document.getElementById('chat-input');
+    const text  = input.value.trim();
+    if (!text) return;
+
+    input.value = '';
+    input.disabled = true;
+    document.getElementById('send-btn').disabled = true;
+
+    // Add user bubble
+    appendMsg('user', text);
+    chatHistory.push({ role: 'user', content: text });
+
+    // Add thinking indicator
+    const thinkId = appendThinking();
+
+    try {
+        const res  = await fetch('/api/chat', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ messages: chatHistory, user_id: currentUser })
+        });
+        const data = await res.json();
+
+        removeThinking(thinkId);
+        chatHistory.push({ role: 'assistant', content: data.response });
+
+        appendMsg('ai', data.response, data.nodes || []);
+
+        // Add new nodes to graph
+        for (const node of (data.nodes || [])) {
+            const voteRes  = await fetch(`/api/votes/${node.id}/${currentUser}`);
+            const voteData = await voteRes.json();
+            node.user_vote = voteData.vote;
+            graph.addNode(node);
+            if (!graphNodes.find(n => n.id === node.id)) graphNodes.push(node);
+        }
+
+    } catch (e) {
+        removeThinking(thinkId);
+        appendMsg('ai', 'Connection error. Is the server running?', []);
+    }
+
+    input.disabled  = false;
+    document.getElementById('send-btn').disabled = false;
+    input.focus();
+}
+
+function appendMsg(role, text, nodes) {
+    const feed = document.getElementById('chat-messages');
+
+    const wrap = document.createElement('div');
+    wrap.className = 'msg ' + role;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble';
+    bubble.textContent = text;
+    wrap.appendChild(bubble);
+
+    if (nodes && nodes.length > 0) {
+        const nodeWrap = document.createElement('div');
+        nodeWrap.className = 'msg-nodes';
+
+        for (const n of nodes) {
+            const pill = document.createElement('div');
+            pill.className = 'node-pill';
+            pill.innerHTML = `
+                <span class="node-pill-dot"></span>
+                <span class="node-pill-text">${n.question}</span>
+                <span class="node-pill-arrow">→ vote</span>
+            `;
+            pill.onclick = () => openNodeModal(n);
+            nodeWrap.appendChild(pill);
+        }
+        wrap.appendChild(nodeWrap);
+    }
+
+    feed.appendChild(wrap);
+    feed.scrollTop = feed.scrollHeight;
+    return wrap;
+}
+
+let thinkCounter = 0;
+function appendThinking() {
+    const id = 'think-' + (++thinkCounter);
+    const feed = document.getElementById('chat-messages');
+    const wrap = document.createElement('div');
+    wrap.className = 'msg ai ai-thinking';
+    wrap.id = id;
+    wrap.innerHTML = '<div class="msg-bubble">thinking…</div>';
+    feed.appendChild(wrap);
+    feed.scrollTop = feed.scrollHeight;
+    return id;
+}
+function removeThinking(id) {
+    const el = document.getElementById(id);
+    if (el) el.remove();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// NODE MODAL & VOTING
+// ══════════════════════════════════════════════════════════════════════════
+
+function openNodeModal(node) {
+    selectedNode = node;
+
+    document.getElementById('modal-text').textContent    = node.question || '';
+    document.getElementById('modal-context').textContent = node.context  || '';
+
+    // Tally
+    const counts = node.vote_counts || { yes: 0, no: 0 };
+    const maybe  = counts.maybe || 0;
+    document.getElementById('modal-tally').textContent =
+        `${counts.yes || 0} true · ${maybe} perhaps · ${counts.no || 0} false`;
+
+    // Highlight current vote
+    document.querySelectorAll('.v-btn').forEach(b => b.style.opacity = '1');
+    if (node.user_vote === 'yes')   document.querySelector('.v-true').style.opacity  = '1';
+    if (node.user_vote === 'maybe') document.querySelector('.v-maybe').style.opacity = '1';
+    if (node.user_vote === 'no')    document.querySelector('.v-false').style.opacity  = '1';
+
+    document.getElementById('node-modal').classList.add('open');
+}
+
+function closeModal() {
+    document.getElementById('node-modal').classList.remove('open');
+    selectedNode = null;
+}
+
+// Close modal on backdrop tap
+document.getElementById('node-modal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('node-modal')) closeModal();
+});
+
+async function castVote(vote) {
+    if (!selectedNode || !currentUser) return;
+
+    try {
+        const res  = await fetch('/api/votes', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ node_id: selectedNode.id, user_id: currentUser, vote })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            // Update local node
+            selectedNode.user_vote  = vote;
+            selectedNode.vote_counts = data.vote_counts;
+            graph.updateNode(selectedNode);
+
+            // Update graphNodes list
+            const n = graphNodes.find(n => n.id === selectedNode.id);
+            if (n) { n.user_vote = vote; n.vote_counts = data.vote_counts; }
+
+            closeModal();
+            if (document.getElementById('tab-timeline').classList.contains('active')) {
+                loadTimeline();
+            }
+        }
+    } catch (e) {
+        console.error('castVote:', e);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// TIMELINE
+// ══════════════════════════════════════════════════════════════════════════
+
+async function loadTimeline() {
+    const list = document.getElementById('timeline-list');
+    list.innerHTML = '';
+
+    const trueNodes = graphNodes.filter(n => n.user_vote === 'yes');
+
+    if (trueNodes.length === 0) {
+        list.innerHTML = '<div class="timeline-empty">No TRUE votes yet.<br>Chat with the AI, then vote TRUE on statements you believe.</div>';
         return;
     }
 
-    let html = `<p style="margin-bottom: 1rem;">Found ${results.length} definition(s) for "${term}":</p>`;
-    results.forEach(node => {
-        html += renderNode(node);
-    });
-
-    container.innerHTML = html;
-}
-
-// Render Node Card
-function renderNode(node, isTimeline = false) {
-    const definingTerms = JSON.parse(node.defining_terms || '[]');
-    const voteCounts = node.vote_counts || { yes: 0, no: 0 };
-    const userVote = node.user_vote || null;
-
-    let voteClass = '';
-    if (userVote === 'yes') voteClass = 'user-voted-yes';
-    if (userVote === 'no') voteClass = 'user-voted-no';
-
-    return `
-        <div class="node-card ${voteClass}" onclick='showVoteModal(${JSON.stringify(node)})'>
-            <div class="node-question">${node.question}</div>
-            ${definingTerms.length > 0 ? `
-                <div style="margin: 0.5rem 0;">
-                    <span class="defines-tag">Defines: ${definingTerms.join(', ')}</span>
-                </div>
-            ` : ''}
-            <div class="node-meta">
-                <span>👥 ${voteCounts.yes} yes, ${voteCounts.no} no</span>
-                ${userVote ? `<span>Your vote: <strong>${userVote.toUpperCase()}</strong></span>` : ''}
-            </div>
-        </div>
-    `;
-}
-
-// Modals
-function closeModal() {
-    document.querySelectorAll('.modal').forEach(modal => {
-        modal.classList.remove('active');
-    });
-    document.getElementById('custom-question-input').value = '';
-}
-
-// UI Helpers
-function showLoading(show) {
-    const loading = document.getElementById('loading');
-    if (show) {
-        loading.classList.remove('hidden');
-    } else {
-        loading.classList.add('hidden');
-    }
-}
-
-function showToast(message, type = 'success') {
-    const toast = document.getElementById('toast');
-    toast.textContent = message;
-    toast.className = `show ${type}`;
-
-    setTimeout(() => {
-        toast.className = '';
-    }, 3000);
-}
-
-// Load global stats
-async function loadGlobalStats() {
-    try {
-        const response = await fetch('/api/stats');
-        const data = await response.json();
-
-        document.getElementById('global-stats').innerHTML = `
-            📊 ${data.nodes} questions • ${data.votes} votes • ${data.users} users
-        `;
-    } catch (error) {
-        console.error('Error loading stats:', error);
+    for (const node of trueNodes) {
+        const el = document.createElement('div');
+        el.className = 'timeline-node';
+        el.textContent = node.question;
+        el.onclick = () => openNodeModal(node);
+        list.appendChild(el);
     }
 }

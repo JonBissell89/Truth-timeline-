@@ -3,172 +3,99 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Truth Timeline - Build Your Reality</title>
-    <link rel="stylesheet" href="/static/style.css?v=3">
+    <title>Truth Timeline</title>
+    <link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
+
     <!-- Login Screen -->
     <div id="login-screen" class="screen active">
-        <div class="container">
-            <h1>🌟 Truth Timeline</h1>
-            <p class="tagline">Build your reality through yes/no choices</p>
-
-            <div class="card">
-                <input type="text" id="username-input" placeholder="Enter your username" />
-                <button onclick="login()" class="btn-primary">Start Your Timeline</button>
-            </div>
-
-            <div class="stats" id="global-stats"></div>
+        <div class="login-wrap">
+            <div class="login-glyph">⬡</div>
+            <h1>Truth Timeline</h1>
+            <p class="login-sub">Map your reality through conversation</p>
+            <input id="username-input" type="text" placeholder="Your name" autocomplete="off" />
+            <button onclick="login()">Begin</button>
         </div>
     </div>
 
-    <!-- Main App Screen -->
+    <!-- App -->
     <div id="app-screen" class="screen">
-        <!-- Header -->
-        <header>
-            <div class="user-info">
-                <span id="current-user"></span>
-                <button onclick="logout()" class="btn-small">Logout</button>
-            </div>
-        </header>
 
-        <!-- Navigation -->
-        <nav class="bottom-nav">
-            <button onclick="showView('home')" class="nav-btn active" data-view="home">
-                <span class="nav-icon">🏠</span>
-                <span class="nav-label">Home</span>
+        <!-- GRAPH TAB -->
+        <div id="tab-graph" class="tab active">
+            <canvas id="graph-canvas"></canvas>
+            <div id="graph-empty" class="graph-empty hidden">
+                <p>Your truth graph is empty.</p>
+                <p>Go to <strong>Chat</strong> and start a conversation.</p>
+            </div>
+            <div id="graph-info" class="graph-info"></div>
+        </div>
+
+        <!-- CHAT TAB -->
+        <div id="tab-chat" class="tab">
+            <div id="chat-messages" class="chat-messages">
+                <div class="chat-welcome">
+                    <p>Ask any question. The AI's statements become nodes in your truth graph.</p>
+                    <div class="sample-prompts">
+                        <button onclick="sendPrompt('Does consciousness exist?')">Does consciousness exist?</button>
+                        <button onclick="sendPrompt('What is reality?')">What is reality?</button>
+                        <button onclick="sendPrompt('Do I exist?')">Do I exist?</button>
+                    </div>
+                </div>
+            </div>
+            <div class="chat-bar">
+                <input id="chat-input" type="text" placeholder="Ask anything..." autocomplete="off"
+                    onkeydown="if(event.key==='Enter') sendMessage()" />
+                <button id="send-btn" onclick="sendMessage()">→</button>
+            </div>
+        </div>
+
+        <!-- TIMELINE TAB -->
+        <div id="tab-timeline" class="tab">
+            <div class="tab-scroll">
+                <h2>Your Truth Path</h2>
+                <p class="dim">Statements you voted TRUE</p>
+                <div id="timeline-list" style="margin-top:1rem;"></div>
+            </div>
+        </div>
+
+        <!-- Bottom Nav -->
+        <nav class="nav">
+            <button class="nav-btn active" data-tab="graph" onclick="switchTab('graph')">
+                <span class="nav-ico">◉</span>
+                <span>Graph</span>
             </button>
-            <button onclick="showView('define')" class="nav-btn" data-view="define">
-                <span class="nav-icon">➕</span>
-                <span class="nav-label">Define</span>
+            <button class="nav-btn" data-tab="chat" onclick="switchTab('chat')">
+                <span class="nav-ico">◎</span>
+                <span>Chat</span>
             </button>
-            <button onclick="showView('timeline')" class="nav-btn" data-view="timeline">
-                <span class="nav-icon">📜</span>
-                <span class="nav-label">Timeline</span>
-            </button>
-            <button onclick="showView('search')" class="nav-btn" data-view="search">
-                <span class="nav-icon">🔍</span>
-                <span class="nav-label">Search</span>
+            <button class="nav-btn" data-tab="timeline" onclick="switchTab('timeline')">
+                <span class="nav-ico">◈</span>
+                <span>Timeline</span>
             </button>
         </nav>
 
-        <!-- Home View -->
-        <div id="home-view" class="view active">
-            <div class="container">
-                <h2>Welcome to Your Timeline</h2>
+    </div>
 
-                <div class="quick-actions">
-                    <button onclick="showView('define')" class="action-card">
-                        <div class="action-icon">📖</div>
-                        <h3>Define a Term</h3>
-                        <p>Start building your reality from first principles</p>
-                    </button>
-
-                    <button onclick="showView('timeline')" class="action-card">
-                        <div class="action-icon">🌌</div>
-                        <h3>View Timeline</h3>
-                        <p>See all your yes/no decisions</p>
-                    </button>
-
-                    <button onclick="showView('search')" class="action-card">
-                        <div class="action-icon">🔎</div>
-                        <h3>Search Definitions</h3>
-                        <p>Find how terms are defined</p>
-                    </button>
-                </div>
-
-                <div class="info-box">
-                    <h3>💡 How it works</h3>
-                    <ul>
-                        <li>Define terms through yes/no questions</li>
-                        <li>Vote YES or NO to construct your reality path</li>
-                        <li>Your votes = your unique timeline</li>
-                        <li>See community definitions (grayed out if you voted differently)</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-
-        <!-- Define Term View -->
-        <div id="define-view" class="view">
-            <div class="container">
-                <h2>Define a Term</h2>
-
-                <div class="card">
-                    <input type="text" id="term-input" placeholder="Enter term (e.g., 'I', 'consciousness')" />
-                    <button onclick="searchTerm()" class="btn-primary">Search for Definition</button>
-                </div>
-
-                <div id="search-results"></div>
-            </div>
-        </div>
-
-        <!-- Timeline View -->
-        <div id="timeline-view" class="view">
-            <div class="container">
-                <h2>Your Timeline</h2>
-                <p class="subtitle">All decisions you voted YES on</p>
-
-                <div id="timeline-list"></div>
-                <div id="orphaned-warning"></div>
-            </div>
-        </div>
-
-        <!-- Search View -->
-        <div id="search-view" class="view">
-            <div class="container">
-                <h2>Search Definitions</h2>
-
-                <div class="card">
-                    <input type="text" id="search-input" placeholder="Search for any term..." />
-                    <button onclick="performSearch()" class="btn-primary">Search</button>
-                </div>
-
-                <div id="search-results-list"></div>
-            </div>
-        </div>
-
-        <!-- Modals -->
-        <div id="vote-modal" class="modal">
-            <div class="modal-content">
-                <h3 id="modal-question"></h3>
-                <p id="modal-defines"></p>
-                <p id="modal-votes"></p>
-
-                <div class="vote-buttons">
-                    <button onclick="voteOnNode('yes')" class="btn-yes">YES</button>
-                    <button onclick="voteOnNode('no')" class="btn-no">NO</button>
-                </div>
-
-                <button onclick="closeModal()" class="btn-secondary">Cancel</button>
-            </div>
-        </div>
-
-        <div id="create-modal" class="modal">
-            <div class="modal-content">
-                <h3>Define "<span id="create-term"></span>"</h3>
-
-                <div id="ai-suggestions"></div>
-
-                <div class="custom-question">
-                    <p>Or create your own:</p>
-                    <input type="text" id="custom-question-input" placeholder="Enter yes/no question..." />
-                    <button onclick="createCustomDefinition()" class="btn-primary">Create & Vote</button>
-                </div>
-
-                <button onclick="closeModal()" class="btn-secondary">Cancel</button>
+    <!-- Node Modal -->
+    <div id="node-modal" class="modal">
+        <div class="modal-card">
+            <button class="modal-close" onclick="closeModal()">✕</button>
+            <div class="modal-statement" id="modal-text"></div>
+            <div class="modal-context" id="modal-context"></div>
+            <div class="modal-tally" id="modal-tally"></div>
+            <div class="vote-row">
+                <button class="v-btn v-true" onclick="castVote('yes')">TRUE</button>
+                <button class="v-btn v-maybe" onclick="castVote('maybe')">PERHAPS</button>
+                <button class="v-btn v-false" onclick="castVote('no')">FALSE</button>
             </div>
         </div>
     </div>
 
-    <!-- Loading Spinner -->
-    <div id="loading" class="loading hidden">
-        <div class="spinner"></div>
-    </div>
+    <!-- Spinner -->
+    <div id="spinner" class="spinner hidden"></div>
 
-    <!-- Toast Notifications -->
-    <div id="toast"></div>
-
-    <script src="/static/app.js?v=3"></script>
+    <script src="/static/app.js?v=5"></script>
 </body>
 </html>

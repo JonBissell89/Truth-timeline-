@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import json
+import re
 import sys
 import os
 
@@ -42,7 +43,17 @@ class CreateNodeRequest(BaseModel):
 class VoteRequest(BaseModel):
     node_id: str
     user_id: str
-    vote: str  # "yes" or "no"
+    vote: str  # "yes", "no", or "maybe"
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    user_id: str
 
 
 class SearchRequest(BaseModel):
@@ -93,12 +104,82 @@ async def get_node(node_id: str):
     return node
 
 
+@app.post("/api/chat")
+async def chat_with_ai(request: ChatRequest):
+    """Send message to Claude, get response + extracted statement nodes."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    if not api_key:
+        return {
+            "response": "No AI key set. Add ANTHROPIC_API_KEY in Replit Secrets to enable AI conversations. Each statement the AI makes will become a node you can vote TRUE, FALSE, or PERHAPS.",
+            "nodes": []
+        }
+
+    try:
+        from anthropic import Anthropic
+        client = Anthropic(api_key=api_key)
+
+        system = """You are a philosophical AI for Truth Timeline — an app where your statements become nodes in the user's personal truth graph.
+
+As you respond, be clear and thoughtful. After your main response, extract 2-3 key DECLARATIVE STATEMENTS from what you said.
+
+ALWAYS end with this exact block:
+<nodes>
+[
+  {"text": "Short statement under 8 words", "context": "One sentence why this matters"}
+]
+</nodes>
+
+Statements should be clear, testable, voteable claims. No questions. No hedging."""
+
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+
+        response = client.messages.create(
+            model="claude-opus-4-5-20251101",
+            max_tokens=1024,
+            system=system,
+            messages=messages
+        )
+
+        content = response.content[0].text
+
+        # Parse out nodes block
+        nodes_match = re.search(r'<nodes>(.*?)</nodes>', content, re.DOTALL)
+        main_response = content
+        created_nodes = []
+
+        if nodes_match:
+            try:
+                nodes_data = json.loads(nodes_match.group(1).strip())
+                main_response = content[:nodes_match.start()].strip()
+
+                for n in nodes_data:
+                    node_id = db.create_node(
+                        question=n.get('text', ''),
+                        user_id=request.user_id,
+                        defining_terms=[],
+                        using_terms=[],
+                        scope='global'
+                    )
+                    node = db.get_node(node_id)
+                    if node:
+                        node['context'] = n.get('context', '')
+                        created_nodes.append(node)
+            except Exception:
+                pass
+
+        return {"response": main_response, "nodes": created_nodes}
+
+    except Exception as e:
+        return {"response": f"AI error: {str(e)}", "nodes": []}
+
+
 @app.post("/api/votes")
 async def vote(request: VoteRequest):
     """Vote on a node."""
     try:
-        if request.vote not in ["yes", "no"]:
-            raise HTTPException(status_code=400, detail="Vote must be 'yes' or 'no'")
+        if request.vote not in ["yes", "no", "maybe"]:
+            raise HTTPException(status_code=400, detail="Vote must be 'yes', 'no', or 'maybe'")
 
         db.vote(request.node_id, request.user_id, request.vote)
 
