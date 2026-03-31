@@ -1,11 +1,10 @@
 // ── STATE ──────────────────────────────────────────────────────────────────
-let currentUser     = null;
-let currentProvider = 'auto';
-let currentFilter   = 'all';
-let selectedNode    = null;
-let chatHistory     = [];
-let graphNodes      = [];   // master list of all nodes
-let graph           = null;
+let currentUser   = null;
+let currentFilter = 'all';
+let selectedNode  = null;
+let chatHistory   = [];
+let graphNodes    = [];   // master list of all nodes
+let graph         = null;
 
 // ── STORAGE ────────────────────────────────────────────────────────────────
 function storageGet(k)    { try { return localStorage.getItem(k); }  catch(e) { return null; } }
@@ -13,64 +12,12 @@ function storageSet(k, v) { try { localStorage.setItem(k, v); }      catch(e) {}
 
 // ── INIT ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    loadProviders();
     const saved = storageGet('ttUser');
     if (saved) {
-        currentUser     = saved;
-        currentProvider = storageGet('ttProvider') || 'auto';
+        currentUser = saved;
         startApp();
     }
 });
-
-// ── PROVIDERS ──────────────────────────────────────────────────────────────
-const PROVIDER_ICONS = { anthropic: '🟣', google: '🔵', openai: '🟢' };
-const PROVIDER_NAMES = { anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', auto: 'AI' };
-
-async function loadProviders() {
-    try {
-        const res  = await fetch('/api/providers');
-        const data = await res.json();
-        renderProviders(data.providers);
-    } catch(e) {
-        document.getElementById('provider-list').innerHTML = '<div class="provider-loading">Could not load</div>';
-    }
-}
-
-function renderProviders(providers) {
-    const list       = document.getElementById('provider-list');
-    const savedProv  = storageGet('ttProvider') || 'auto';
-    const firstAvail = providers.find(p => p.available);
-    const defaultId  = (savedProv !== 'auto') ? savedProv : (firstAvail ? firstAvail.id : 'auto');
-    currentProvider  = defaultId;
-
-    let html = '';
-    for (const p of providers) {
-        const isSel = p.id === defaultId;
-        const icon  = PROVIDER_ICONS[p.id] || '⚪';
-        const badge = p.available
-            ? (p.free ? '<span class="provider-badge badge-free">FREE</span>' : '')
-            : '<span class="provider-badge badge-no-key">NO KEY</span>';
-        html += `
-        <button class="provider-card${isSel?' selected':''}${!p.available?' unavailable':''}"
-                id="pcard-${p.id}" onclick="selectProvider('${p.id}')"
-                ${!p.available?'disabled':''}>
-            <span class="provider-icon">${icon}</span>
-            <span class="provider-info">
-                <span class="provider-name">${p.name}</span>
-                <span class="provider-maker">${p.maker}</span>
-            </span>${badge}
-        </button>`;
-    }
-    list.innerHTML = html;
-}
-
-function selectProvider(id) {
-    currentProvider = id;
-    storageSet('ttProvider', id);
-    document.querySelectorAll('.provider-card').forEach(c => c.classList.remove('selected'));
-    const card = document.getElementById('pcard-' + id);
-    if (card) card.classList.add('selected');
-}
 
 // ── LOGIN ──────────────────────────────────────────────────────────────────
 function login() {
@@ -78,7 +25,6 @@ function login() {
     if (!name) return;
     currentUser = name;
     storageSet('ttUser', name);
-    storageSet('ttProvider', currentProvider);
     startApp();
 }
 
@@ -90,17 +36,8 @@ function startApp() {
     as.style.display = 'flex';
     as.classList.add('active');
 
-    // User tag in filter bar
     const tag = document.getElementById('user-tag');
     if (tag) tag.textContent = currentUser;
-
-    // AI indicator in panel header
-    const ind = document.getElementById('ai-indicator');
-    if (ind) {
-        const icon = PROVIDER_ICONS[currentProvider] || '◎';
-        const name = PROVIDER_NAMES[currentProvider] || currentProvider;
-        ind.textContent = `${icon} ${name}`;
-    }
 
     initGraph();
     loadAllNodes();
@@ -427,7 +364,15 @@ async function sendMessage() {
         const res  = await fetch('/api/chat', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ messages: chatHistory, user_id: currentUser, provider: currentProvider })
+            body:    JSON.stringify({
+                messages: chatHistory,
+                user_id:  currentUser,
+                nodes:    graphNodes.map(n => ({
+                    text:      n.question,
+                    vote:      n.user_vote || null,
+                    community: (n.vote_counts ? (n.vote_counts.yes||0)+(n.vote_counts.no||0)+(n.vote_counts.maybe||0) : 0)
+                }))
+            })
         });
         const data = await res.json();
 

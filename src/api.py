@@ -54,7 +54,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     user_id: str
-    provider: str = "auto"  # "anthropic", "google", "openai", or "auto"
+    nodes: Optional[List[dict]] = []   # user's current decision graph
 
 
 class SearchRequest(BaseModel):
@@ -105,18 +105,52 @@ async def get_node(node_id: str):
     return node
 
 
-SYSTEM_PROMPT = """You are a philosophical AI for Truth Timeline — an app where your statements become nodes in the user's personal truth graph.
+BASE_PROMPT = """You are Claude, the AI inside Truth Timeline — an app that maps a person's reasoning across all their conversations as a visual decision graph.
 
-As you respond, be clear and thoughtful. After your main response, extract 2-3 key DECLARATIVE STATEMENTS from what you said.
+Every statement you make can become a node the user votes TRUE, FALSE, or PERHAPS. Over time, this graph becomes their reasoning lineage — a structured record of everything they've concluded, rejected, or are still working through.
 
+Your role:
+- Be aware of the user's existing decisions (provided below). Don't re-derive what they've already settled.
+- Focus depth on their PERHAPS nodes — those are live, unresolved questions.
+- If something you say conflicts with a node they voted TRUE or FALSE, surface that tension explicitly.
+- Build on their reasoning history rather than starting from zero each time.
+
+After every response, extract 2-3 key DECLARATIVE STATEMENTS from what you said.
 ALWAYS end with this exact block:
 <nodes>
 [
-  {"text": "Short statement under 8 words", "context": "One sentence why this matters"}
+  {"text": "Claim under 8 words", "context": "One sentence why this matters"}
 ]
 </nodes>
 
-Statements should be clear, testable, voteable claims. No questions. No hedging."""
+Statements must be clear, voteable claims — no questions, no hedging."""
+
+
+def build_system_prompt(nodes: list) -> str:
+    if not nodes:
+        return BASE_PROMPT + "\n\nThis is the user's first conversation — no decision history yet."
+
+    true_nodes    = [n for n in nodes if n.get('vote') == 'yes']
+    false_nodes   = [n for n in nodes if n.get('vote') == 'no']
+    perhaps_nodes = [n for n in nodes if n.get('vote') == 'maybe']
+    unvoted       = [n for n in nodes if not n.get('vote')]
+
+    sections = []
+    if true_nodes:
+        lines = '\n'.join(f"  - {n['text']}" for n in true_nodes)
+        sections.append(f"SETTLED TRUE (user has committed to these):\n{lines}")
+    if false_nodes:
+        lines = '\n'.join(f"  - {n['text']}" for n in false_nodes)
+        sections.append(f"SETTLED FALSE (user has rejected these):\n{lines}")
+    if perhaps_nodes:
+        lines = '\n'.join(f"  - {n['text']}" for n in perhaps_nodes)
+        sections.append(f"UNCERTAIN / PERHAPS (open questions — prioritize these):\n{lines}")
+    if unvoted:
+        lines = '\n'.join(f"  - {n['text']}" for n in unvoted[:10])  # cap at 10
+        sections.append(f"UNVOTED (raised but no stance yet):\n{lines}")
+
+    graph_context = "\n\n".join(sections)
+    return f"{BASE_PROMPT}\n\n--- USER'S DECISION GRAPH ---\n{graph_context}\n--- END GRAPH ---"
 
 
 def _parse_ai_content(content, user_id):
@@ -159,108 +193,33 @@ async def get_global_nodes(user_id: Optional[str] = None):
     return {"nodes": results}
 
 
-@app.get("/api/providers")
-async def get_providers():
-    """Return which AI providers are configured (keys set)."""
-    return {
-        "providers": [
-            {
-                "id": "anthropic",
-                "name": "Claude",
-                "maker": "Anthropic",
-                "available": bool(os.environ.get("ANTHROPIC_API_KEY")),
-                "free": False
-            },
-            {
-                "id": "google",
-                "name": "Gemini",
-                "maker": "Google",
-                "available": bool(os.environ.get("GOOGLE_API_KEY")),
-                "free": True
-            },
-            {
-                "id": "openai",
-                "name": "ChatGPT",
-                "maker": "OpenAI",
-                "available": bool(os.environ.get("OPENAI_API_KEY")),
-                "free": False
-            }
-        ]
-    }
 
-
-def _call_anthropic(messages, user_id):
+def _call_claude(messages, user_id, system_prompt):
     from anthropic import Anthropic
     client   = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     msgs     = [{"role": m.role, "content": m.content} for m in messages]
     response = client.messages.create(
         model="claude-opus-4-5-20251101",
         max_tokens=1024,
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         messages=msgs
     )
     return _parse_ai_content(response.content[0].text, user_id)
 
 
-def _call_google(messages, user_id):
-    import google.generativeai as genai
-    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-    model   = genai.GenerativeModel(model_name="gemini-1.5-flash",
-                                    system_instruction=SYSTEM_PROMPT)
-    history = []
-    msgs    = list(messages)
-    for m in msgs[:-1]:
-        history.append({"role": "user" if m.role == "user" else "model",
-                         "parts": [m.content]})
-    chat   = model.start_chat(history=history)
-    result = chat.send_message(msgs[-1].content if msgs else "")
-    return _parse_ai_content(result.text, user_id)
-
-
-def _call_openai(messages, user_id):
-    from openai import OpenAI
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    msgs   = [{"role": "system", "content": SYSTEM_PROMPT}]
-    msgs  += [{"role": m.role, "content": m.content} for m in messages]
-    resp   = client.chat.completions.create(model="gpt-4o-mini", messages=msgs, max_tokens=1024)
-    return _parse_ai_content(resp.choices[0].message.content, user_id)
-
-
-_CALLERS = {
-    "anthropic": (_call_anthropic, "ANTHROPIC_API_KEY"),
-    "google":    (_call_google,    "GOOGLE_API_KEY"),
-    "openai":    (_call_openai,    "OPENAI_API_KEY"),
-}
-
-
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatRequest):
-    """Send message to chosen AI provider, return response + extracted nodes."""
-    provider = request.provider
+    """Send message to Claude with the user's decision graph as context."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return {"response": "No API key configured. Add ANTHROPIC_API_KEY in Replit Secrets.", "nodes": []}
 
-    # Build ordered list: chosen provider first, then others as fallback
-    order = [provider] if provider != "auto" else ["anthropic", "google", "openai"]
-    if provider not in ("auto", "anthropic"):
-        order += [p for p in ["anthropic", "google", "openai"] if p != provider]
+    system_prompt = build_system_prompt(request.nodes or [])
 
-    for p in order:
-        fn, env_key = _CALLERS[p]
-        if not os.environ.get(env_key):
-            continue
-        try:
-            main_response, nodes = fn(request.messages, request.user_id)
-            return {"response": main_response, "nodes": nodes, "provider": p}
-        except Exception as e:
-            err = str(e)
-            # Only fall through on credit/billing errors; hard-fail on others
-            if not any(w in err.lower() for w in ("credit", "billing", "balance", "quota")):
-                return {"response": f"AI error: {err}", "nodes": [], "provider": p}
-
-    return {
-        "response": "No AI key configured. Ask the app owner to add GOOGLE_API_KEY (free), ANTHROPIC_API_KEY, or OPENAI_API_KEY in Replit Secrets.",
-        "nodes": [],
-        "provider": None
-    }
+    try:
+        main_response, nodes = _call_claude(request.messages, request.user_id, system_prompt)
+        return {"response": main_response, "nodes": nodes}
+    except Exception as e:
+        return {"response": f"Claude error: {str(e)}", "nodes": []}
 
 
 @app.post("/api/votes")
