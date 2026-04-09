@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Truth Timeline</title>
-    <link rel="stylesheet" href="/static/style.css?v=8">
+    <link rel="stylesheet" href="/static/style.css?v=9">
 </head>
 <body>
 
@@ -14,47 +14,55 @@
             <div class="login-glyph">⬡</div>
             <h1>Truth Timeline</h1>
             <p class="login-sub">Map your reality through conversation</p>
-            <input id="username-input" type="text" placeholder="Your name" autocomplete="off"
-                onkeydown="if(event.key==='Enter') login()" />
+
+            <input id="username-input" type="text" placeholder="Your name"
+                autocomplete="off" onkeydown="if(event.key==='Enter') document.getElementById('apikey-input').focus()" />
+
+            <input id="apikey-input" type="password" placeholder="Anthropic API key  (sk-ant-…)"
+                autocomplete="off" onkeydown="if(event.key==='Enter') login()" />
+
+            <p class="login-privacy">
+                Your key stays on your device and is only used to talk to Claude.
+                <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get a key →</a>
+            </p>
+
             <button onclick="login()">Begin</button>
         </div>
     </div>
 
-    <!-- Dashboard — single page, no tabs -->
+    <!-- Dashboard -->
     <div id="app-screen" class="screen">
 
-        <!-- Filter Bar -->
-        <div class="filter-bar">
-            <div class="filter-chips" id="filter-chips">
-                <button class="chip active" data-filter="all"     onclick="setFilter('all')">All</button>
-                <button class="chip"        data-filter="true"    onclick="setFilter('true')">✓ True</button>
-                <button class="chip"        data-filter="false"   onclick="setFilter('false')">✗ False</button>
-                <button class="chip"        data-filter="perhaps" onclick="setFilter('perhaps')">≈ Perhaps</button>
-                <button class="chip"        data-filter="hot"     onclick="setFilter('hot')">🔥 Hot</button>
+        <!-- View bar -->
+        <div class="view-bar">
+            <div class="view-tabs">
+                <button class="view-tab active" data-view="mymind"    onclick="setView('mymind')">My Mind</button>
+                <button class="view-tab"        data-view="community" onclick="setView('community')">Community</button>
+                <button class="view-tab"        data-view="compare"   onclick="setView('compare')">Compare</button>
             </div>
-            <div id="user-tag" class="user-tag"></div>
+            <div id="compare-wrap" class="compare-wrap hidden">
+                <input id="compare-input" type="text" placeholder="Enter username…"
+                    onkeydown="if(event.key==='Enter') loadCompare()" />
+                <button onclick="loadCompare()">→</button>
+            </div>
+            <div id="user-tag" class="user-tag" onclick="confirmLogout()"></div>
         </div>
 
         <!-- Graph -->
         <div id="graph-area" class="graph-area">
             <canvas id="graph-canvas"></canvas>
             <div id="graph-empty" class="graph-empty hidden">
-                <p>Graph is empty.</p>
+                <p>No nodes yet.</p>
                 <p>Chat below to start.</p>
             </div>
             <div id="graph-info" class="graph-info"></div>
         </div>
 
-        <!-- Bottom Panel: Chat + Timeline -->
+        <!-- Bottom Panel -->
         <div class="bottom-panel">
-
             <div class="panel-header">
-                <button class="panel-tab active" data-panel="chat" onclick="switchPanel('chat')">
-                    ◎ Chat
-                </button>
-                <button class="panel-tab" data-panel="timeline" onclick="switchPanel('timeline')">
-                    ◈ Timeline
-                </button>
+                <button class="panel-tab active" data-panel="chat" onclick="switchPanel('chat')">◎ Chat</button>
+                <button class="panel-tab" data-panel="timeline" onclick="switchPanel('timeline')">◈ Timeline</button>
                 <div class="ai-indicator">🟣 Claude</div>
             </div>
 
@@ -62,11 +70,11 @@
             <div id="panel-chat" class="panel-content active">
                 <div id="chat-messages" class="chat-messages">
                     <div class="chat-welcome">
-                        <p>Ask anything — AI statements become graph nodes.</p>
+                        <p>Ask anything — statements become nodes you can vote on.</p>
                         <div class="sample-prompts">
-                            <button onclick="sendPrompt('Does consciousness exist?')">Does consciousness exist?</button>
-                            <button onclick="sendPrompt('What is reality?')">What is reality?</button>
-                            <button onclick="sendPrompt('Do I exist?')">Do I exist?</button>
+                            <button onclick="sendPrompt('Does free will exist?')">Does free will exist?</button>
+                            <button onclick="sendPrompt('Is consciousness physical?')">Is consciousness physical?</button>
+                            <button onclick="sendPrompt('Can AI be sentient?')">Can AI be sentient?</button>
                         </div>
                     </div>
                 </div>
@@ -84,7 +92,6 @@
                     <div id="timeline-list"></div>
                 </div>
             </div>
-
         </div>
     </div>
 
@@ -103,6 +110,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=8"></script>
+    <script src="/static/app.js?v=9"></script>
 </body>
 </html>

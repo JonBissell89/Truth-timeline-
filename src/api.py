@@ -54,7 +54,8 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     user_id: str
-    nodes: Optional[List[dict]] = []   # user's current decision graph
+    api_key: str                        # user's own Anthropic key — never stored server-side
+    nodes: Optional[List[dict]] = []    # user's current decision graph for context
 
 
 class SearchRequest(BaseModel):
@@ -95,13 +96,45 @@ async def create_node(request: CreateNodeRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/nodes/global")
+async def get_global_nodes(user_id: Optional[str] = None):
+    """All nodes with community vote counts and the requesting user's vote."""
+    cur = db._cursor()
+    cur.execute("SELECT * FROM nodes ORDER BY created_at DESC")
+    nodes = db._fetchall(cur)
+
+    # Bulk vote counts — 1 query instead of N
+    cur.execute("SELECT node_id, vote, COUNT(*) AS c FROM votes GROUP BY node_id, vote")
+    counts_map = {}
+    for row in db._fetchall(cur):
+        counts_map.setdefault(row['node_id'], {"yes": 0, "no": 0, "maybe": 0})
+        counts_map[row['node_id']][row['vote']] = row['c']
+
+    user_votes = db.get_user_votes_bulk(user_id) if user_id else {}
+
+    for n in nodes:
+        n['vote_counts'] = counts_map.get(n['id'], {"yes": 0, "no": 0, "maybe": 0})
+        n['user_vote']   = user_votes.get(n['id']) if user_id else None
+
+    return {"nodes": nodes}
+
+
+@app.get("/api/nodes/compare")
+async def compare_nodes(user_a: str, user_b: str):
+    """Return all nodes with both users' votes for side-by-side comparison."""
+    nodes = db.get_compare_nodes(user_a, user_b)
+    has_b = any(n.get('vote_b') for n in nodes)
+    if not has_b:
+        return {"nodes": nodes, "user_a": user_a, "user_b": user_b, "warning": f"No votes found for '{user_b}'"}
+    return {"nodes": nodes, "user_a": user_a, "user_b": user_b}
+
+
 @app.get("/api/nodes/{node_id}")
 async def get_node(node_id: str):
     """Get a single node by ID."""
     node = db.get_node(node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
-
     return node
 
 
@@ -182,21 +215,12 @@ def _parse_ai_content(content, user_id):
     return main_response, created_nodes
 
 
-@app.get("/api/nodes/global")
-async def get_global_nodes(user_id: Optional[str] = None):
-    """All nodes in the system with vote counts and user's vote."""
-    results = db.search_definitions(term='', scope=None, user_id=user_id)
-    for r in results:
-        r['vote_counts'] = db.get_vote_count(r['id'])
-        if user_id:
-            r['user_vote'] = db.get_vote(r['id'], user_id)
-    return {"nodes": results}
 
 
 
-def _call_claude(messages, user_id, system_prompt):
+def _call_claude(messages, user_id, system_prompt, api_key: str):
     from anthropic import Anthropic
-    client   = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client   = Anthropic(api_key=api_key)
     msgs     = [{"role": m.role, "content": m.content} for m in messages]
     response = client.messages.create(
         model="claude-opus-4-5-20251101",
@@ -210,13 +234,13 @@ def _call_claude(messages, user_id, system_prompt):
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatRequest):
     """Send message to Claude with the user's decision graph as context."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return {"response": "No API key configured. Add ANTHROPIC_API_KEY in Replit Secrets.", "nodes": []}
+    if not request.api_key:
+        return {"response": "No API key provided. Add your Anthropic key on the login screen.", "nodes": []}
 
     system_prompt = build_system_prompt(request.nodes or [])
 
     try:
-        main_response, nodes = _call_claude(request.messages, request.user_id, system_prompt)
+        main_response, nodes = _call_claude(request.messages, request.user_id, system_prompt, request.api_key)
         return {"response": main_response, "nodes": nodes}
     except Exception as e:
         return {"response": f"Claude error: {str(e)}", "nodes": []}

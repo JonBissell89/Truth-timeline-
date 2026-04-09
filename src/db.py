@@ -284,8 +284,8 @@ class TimelineDB:
     # ─── Votes ────────────────────────────────────────────────────────────────
 
     def vote(self, node_id: str, user_id: str, vote: str):
-        if vote not in ["yes", "no"]:
-            raise ValueError(f"Vote must be 'yes' or 'no', got: {vote}")
+        if vote not in ["yes", "no", "maybe"]:
+            raise ValueError(f"Vote must be 'yes', 'no', or 'maybe', got: {vote}")
 
         ph = self._ph()
         cur = self._cursor()
@@ -317,10 +317,34 @@ class TimelineDB:
         ph = self._ph()
         cur = self._cursor()
         cur.execute(f"SELECT vote, COUNT(*) AS count FROM votes WHERE node_id = {ph} GROUP BY vote", (node_id,))
-        counts = {"yes": 0, "no": 0}
+        counts = {"yes": 0, "no": 0, "maybe": 0}
         for row in self._fetchall(cur):
             counts[row['vote']] = row['count']
         return counts
+
+    def get_user_votes_bulk(self, user_id: str) -> dict:
+        """Returns {node_id: vote} for all votes by this user — single query."""
+        ph = self._ph()
+        cur = self._cursor()
+        cur.execute(f"SELECT node_id, vote FROM votes WHERE user_id = {ph}", (user_id,))
+        return {row['node_id']: row['vote'] for row in self._fetchall(cur)}
+
+    def get_compare_nodes(self, user_a: str, user_b: str) -> list:
+        """All nodes with both users' votes attached."""
+        cur = self._cursor()
+        cur.execute("SELECT * FROM nodes ORDER BY created_at DESC")
+        nodes = self._fetchall(cur)
+        votes_a = self.get_user_votes_bulk(user_a)
+        votes_b = self.get_user_votes_bulk(user_b)
+        result = []
+        for n in nodes:
+            n['vote_a'] = votes_a.get(n['id'])
+            n['vote_b'] = votes_b.get(n['id'])
+            n['vote_counts'] = self.get_vote_count(n['id'])
+            result.append(n)
+        # Only return nodes where at least one user has voted
+        voted = [n for n in result if n['vote_a'] or n['vote_b']]
+        return voted if voted else result
 
     # ─── Search ───────────────────────────────────────────────────────────────
 
