@@ -1,0 +1,106 @@
+I want you to think deeply about the concept of **node weights** inside a Truth Timeline / Truth Node decision system.
+
+This is not about summarizing. This is about designing the weighting logic itself.
+
+CONTEXT:
+
+In this system, truth nodes are binary decision points (YES / NO), and a user’s timeline is formed by the path of decisions they take through a directed graph.
+
+But truth alone is not enough.
+
+A node may be true, valid, and reachable, yet still not be the most important node to surface, traverse, prioritize, or act on.
+
+Because of this, every node may need one or more **weights** that influence how the system behaves.
+
+I want you to design the theory and architecture of those weights.
+
+FOCUS ONLY ON NODE WEIGHTS.
+
+Please address the following:
+
+1. What is a node weight?
+
+* Define it formally
+* Explain how a weight differs from truth
+* Explain how a weight differs from confidence, popularity, or probability
+
+2. What kinds of weights should exist?
+   Examples may include:
+
+* relevance weight
+* urgency weight
+* community weight
+* novelty weight
+* stability weight
+* intent alignment weight
+* personal preference weight
+* historical importance weight
+* recency weight
+* downstream impact weight
+
+I want you to determine which weights belong in the system and why.
+
+3. How should weights interact?
+
+* Are weights additive?
+* multiplicative?
+* hierarchical?
+* context-dependent?
+* user-specific vs global?
+
+4. How should weights change over time?
+
+* based on user behavior
+* based on new truth nodes
+* based on retroactive vote changes
+* based on community activity
+* based on shifts in declared intent
+
+5. How should weights affect system behavior?
+   For example:
+
+* which nodes get surfaced first
+* which paths get recommended
+* which timelines are considered more stable
+* which unresolved nodes deserve attention
+* which branches are explored in “explore mode” vs “exploit mode”
+
+6. How should weights interact with intent?
+   This is very important.
+
+The user’s intent may not be fully writable or fully explicit.
+Therefore, node weights may need to represent the tension between:
+
+* grounded truth
+* what the user wants
+* what the user values
+* what mode the system is in
+
+Explain how weights can help the system operate under incomplete intent.
+
+7. How should weights remain traceable?
+   I want every important weight to be explainable:
+
+* where it came from
+* why it changed
+* what influenced it
+* how it affected ranking or traversal
+
+8. What are the risks of weighting nodes incorrectly?
+   Examples:
+
+* reinforcing bias
+* over-prioritizing popularity
+* suppressing novel paths
+* making the system too conservative
+* making the system too chaotic
+
+Please treat this as a serious design problem in:
+
+* graph systems
+* decision theory
+* AI reasoning
+* human preference modeling
+
+Do not talk generally about AI.
+Stay specifically focused on **node weights** as a system for ranking, traversing, and prioritizing truth nodes.
