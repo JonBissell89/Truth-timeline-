@@ -60,6 +60,37 @@ with discipline under it. See [[core_the_law]].
 5. **Store is a seam.** Engine never imports a DB client. New stores
    implement `Store`; engine code does not change.
 
+# Resolution is a HYBRID with a SHRINKING frontier (this session)
+
+The working model: a CONVERSATION in → a TRUTH-GRAPH out. `transfer(turns,
+store, resolver, learner?)` runs ordered utterances through a `Resolver`.
+
+`Resolver` is a SEAM (like the store). `HybridResolver` chains:
+1. **DeterministicResolver** — cheap/certain: learned patterns + token-overlap
+   near-duplicate. Returns `null` (PASSES) on ambiguity — never guesses a merge.
+2. **LlmResolver** — the FRONTIER. Called only for what determinism passed.
+   Takes an injected `judge` (Claude via connector in prod; a batched
+   extraction pass for the transfer test). MUST check `ctx.nodes` and
+   `ground` an existing proposition rather than mint a duplicate.
+
+A `Resolution` is `ground` (existing node +strength) | `new` (novel
+proposition + T/F/UNKNOWN) | `skip` (not decidable; utterance still recorded).
+
+**The dogfooding curve (founder's insight, now PROVEN):** every LLM
+resolution is `learn()`ed into the deterministic resolver, keyed on the
+PROPOSITION TEXT (stable) not the node id (ephemeral/per-store), and
+re-resolved to the live node by proposition. So the LLM is needed LESS over
+time. Measured on the transfer test: pass 1 = 15 LLM decisions, pass 2 = 11
+(27% shrink). `npx tsx scripts/transfer-this-conversation.ts`.
+
+**Two real bugs the transfer test caught** (recorded so they aren't re-made):
+- judge ignored `ctx.nodes` → made duplicate nodes for restatements. Fix:
+  judge checks the map first, grounds if the proposition exists.
+- learning keyed on node id → died across stores (fresh MemoryStore per run).
+  Fix: learn the proposition, re-resolve to the live node.
+The harness FAILED first (0% shrink, 15 nodes with dupes), then passed
+(27% shrink, 11 nodes). Build the harness; let it fail honestly first.
+
 # What's intentionally NOT here yet
 
 - Node↔node edges (derivation links, "this truth from that one"). The event
