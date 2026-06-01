@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+/* ── Orenda — "Claude traveling in space" ────────────────────────────────
+   Dark, deep, calm. A traveler's instrument panel: quiet, trustworthy,
+   future-but-warm. Nodes are distant lights you navigate toward. NOT neon,
+   NOT cold sci-fi. The palette is deep space-blue/ink with a warm amber
+   accent (the agent's voice) and three truth-light hues. */
+:root {
+  /* the void */
+  --space-0: #06080f;   /* deepest background */
+  --space-1: #0b0f1a;   /* panel */
+  --space-2: #131a2b;   /* raised panel / hover */
+  --space-3: #1e2740;   /* border / divider */
+
+  --ink-100: #eef2fb;   /* primary text — starlight */
+  --ink-300: #aab4cf;   /* secondary text */
+  --ink-500: #6b7796;   /* muted */
+
+  /* the warm voice (agent / accent) */
+  --amber: #e6b873;
+  --amber-dim: #8a6d3f;
+
+  /* truth lights — a node's state is a colour of light */
+  --true:    #6fe3c0;   /* settled true — calm aqua-green */
+  --false:   #5b6480;   /* settled false — dimmed, receded */
+  --unknown: #8fb4ff;   /* open question — cool blue, it pulses (seat of convo) */
+
+  --background: var(--space-0);
+  --foreground: var(--ink-100);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-space-0: var(--space-0);
+  --color-space-1: var(--space-1);
+  --color-space-2: var(--space-2);
+  --color-space-3: var(--space-3);
+  --color-ink-100: var(--ink-100);
+  --color-ink-300: var(--ink-300);
+  --color-ink-500: var(--ink-500);
+  --color-amber: var(--amber);
+  --color-true: var(--true);
+  --color-false: var(--false);
+  --color-unknown: var(--unknown);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background:
+    radial-gradient(1200px 800px at 70% -10%, #0e1426 0%, transparent 60%),
+    radial-gradient(900px 600px at 10% 110%, #0a1020 0%, transparent 55%),
+    var(--space-0);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+/* UNKNOWN nodes breathe — they are the seat of conversation, alive. */
+@keyframes orenda-pulse {
+  0%, 100% { opacity: 0.55; filter: drop-shadow(0 0 6px var(--unknown)); }
+  50%      { opacity: 1;    filter: drop-shadow(0 0 16px var(--unknown)); }
+}
+.orenda-unknown { animation: orenda-pulse 3.2s ease-in-out infinite; }
