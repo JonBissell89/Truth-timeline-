@@ -54,8 +54,14 @@ witnesses agreeing) = far stronger. The variation is the evidence, not noise.
   similarity is deferred. Founder: "lets get the strength first then ask."
 - **Symbiosis policy** — how one person's strength reaches a coworker's map.
   Deferred until strength exists to dispose. Founder: "lets get it first."
+- **Weight formula** — strength is now a SUM of per-grounding WEIGHTS (not a
+  flat count); the engine stores the weight, but WHAT sets it is deferred.
+  Candidates: speaker × relatedness (symbiosis axis), conviction ×
+  independence (accretion axis), or both. From the old Truth-timeline-
+  repo's "Design node weights" PR. Founder: "store the weight, defer the
+  formula." Today all weights default 1.0. See [[reference_engine_shape]].
 
-Both are downstream of "make strength visible." Don't build the thermostat
-before the thermometer ticks.
+All three are downstream of "make strength visible." Don't build the
+thermostat before the thermometer ticks.
 
 Related: [[core_what_orenda_is]] · [[core_the_ladder]] · [[reference_engine_shape]]

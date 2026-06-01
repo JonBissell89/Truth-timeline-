@@ -65,6 +65,11 @@ async function main() {
     accretion,
     'said once is a candidate, said three ways by two people is grounded',
   )
+  // A WEIGHTED grounding — strength is a SUM of weights, not a flat count.
+  // This restatement is a low-conviction echo, so it adds only 0.3. With
+  // the formula deferred, weights are passed explicitly for now; the proof
+  // is that strength can be fractional, i.e. truly weighted.
+  await o.restate(accretion, 'maybe repetition strengthens things', 'user', 0.3)
 
   // --- The moat as a TRUE node ----------------------------------------
   const ropeNeverCut = await o.assert(

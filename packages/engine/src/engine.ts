@@ -4,7 +4,7 @@
 // Three operations write to the append-only log:
 //   utter(text, speaker)        -> an Utterance enters. Just the rope end.
 //   createNode(proposition,...) -> a proposition is born from an utterance.
-//   ground(nodeId, utteranceId) -> another utterance lands on a node (+1 strength).
+//   ground(nodeId, utteranceId, weight) -> another utterance lands on a node (+weight strength).
 //   setState(nodeId, to, ...)   -> the truth moves (append, never overwrite).
 //
 // One operation reads:
@@ -50,6 +50,7 @@ export class Orenda {
     proposition: string,
     originUtteranceId: string,
     state: TruthState = 'UNKNOWN',
+    weight = 1,
   ): Promise<string> {
     const nodeId = id('node')
     const ev: NodeEvent = {
@@ -58,6 +59,7 @@ export class Orenda {
       originUtteranceId,
       proposition,
       state,
+      weight,
       at: new Date().toISOString(),
     }
     await this.store.appendEvent(ev)
@@ -69,11 +71,12 @@ export class Orenda {
    *  the same node: +1. We do not auto-decide that two utterances are the
    *  same node here; the caller asserts the match (manual for now, by
    *  design — resolution policy is a deferred UNKNOWN of the product). */
-  async ground(nodeId: string, utteranceId: string): Promise<void> {
+  async ground(nodeId: string, utteranceId: string, weight = 1): Promise<void> {
     await this.store.appendEvent({
       kind: 'grounded',
       nodeId,
       utteranceId,
+      weight,
       at: new Date().toISOString(),
     })
   }
@@ -103,16 +106,22 @@ export class Orenda {
     proposition: string,
     state: TruthState = 'UNKNOWN',
     speaker = 'user',
+    weight = 1,
   ): Promise<string> {
     const u = await this.utter(text, speaker)
-    return this.createNode(proposition, u.id, state)
+    return this.createNode(proposition, u.id, state, weight)
   }
 
   /** Convenience: an utterance that grounds an EXISTING node (+1 strength).
    *  This is the everyday motion — saying the same truth another way. */
-  async restate(nodeId: string, text: string, speaker = 'user'): Promise<void> {
+  async restate(
+    nodeId: string,
+    text: string,
+    speaker = 'user',
+    weight = 1,
+  ): Promise<void> {
     const u = await this.utter(text, speaker)
-    await this.ground(nodeId, u.id)
+    await this.ground(nodeId, u.id, weight)
   }
 
   /** Fold the append-only event log into the current view of every node.
@@ -128,8 +137,9 @@ export class Orenda {
           id: e.nodeId,
           proposition: e.proposition,
           state: e.state,
-          // strength counts the origin utterance + every later grounding
-          strength: 1,
+          // strength = SUM of grounding weights, origin first. With all
+          // weights 1.0 this equals the distinct-utterance count.
+          strength: e.weight,
           originUtteranceId: e.originUtteranceId,
           createdAt: e.at,
           groundedBy: [e.originUtteranceId],
@@ -139,10 +149,11 @@ export class Orenda {
         if (!n) continue
         // distinct utterances only — re-grounding the same utterance is
         // not a stronger truth, it is a duplicate. Convergent grounding
-        // (different utterances) is what earns strength.
+        // (different utterances) is what earns strength, weighted by how
+        // much that witness counts.
         if (!n.groundedBy.includes(e.utteranceId)) {
           n.groundedBy.push(e.utteranceId)
-          n.strength += 1
+          n.strength += e.weight
         }
       } else if (e.kind === 'state_changed') {
         const n = map.get(e.nodeId)

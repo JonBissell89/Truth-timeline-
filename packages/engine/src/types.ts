@@ -41,14 +41,23 @@ export type NodeEvent =
       proposition: string
       /** Initial truth state. */
       state: TruthState
+      /** Weight of this first grounding. Strength is the SUM of weights,
+       *  not a flat count — some witnesses count more than others. The
+       *  FORMULA that sets this (speaker × conviction × independence) is a
+       *  deferred open question; until it lands, callers pass 1.0 and
+       *  strength behaves like a count. The slot is real now so we never
+       *  re-migrate the event log to add it. */
+      weight: number
       at: string
     }
   | {
       kind: 'grounded'
       nodeId: string
       /** An utterance that resolved to this same node — the accretion
-       *  signal. Each distinct grounding is +1 strength. */
+       *  signal. */
       utteranceId: string
+      /** Weight of this grounding (see 'created'.weight). Default 1.0. */
+      weight: number
       at: string
     }
   | {
@@ -68,9 +77,10 @@ export interface NodeView {
   id: string
   proposition: string
   state: TruthState
-  /** Count of distinct utterances that grounded this node (created +
-   *  every grounded event). This is the truth-strength signal: said more
-   *  times, more ways, = stronger. */
+  /** Truth-strength: the SUM of the weights of every distinct utterance
+   *  that grounded this node (origin + each grounding). Said more times,
+   *  more ways, by weightier witnesses = stronger. With all weights 1.0
+   *  this equals the distinct-utterance count. */
   strength: number
   originUtteranceId: string
   createdAt: string

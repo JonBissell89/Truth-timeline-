@@ -20,23 +20,41 @@ src/index.ts   public surface
 # API (Orenda class)
 
 - `utter(text, speaker='user') → Utterance` — a raw thing said enters.
-- `createNode(proposition, originUtteranceId, state='UNKNOWN') → nodeId`
-- `ground(nodeId, utteranceId)` — +1 strength (accretion).
+- `createNode(proposition, originUtteranceId, state='UNKNOWN', weight=1) → nodeId`
+- `ground(nodeId, utteranceId, weight=1)` — +weight strength (accretion).
 - `setState(nodeId, to, utteranceId|null)` — truth moves, APPENDED.
-- `assert(text, proposition, state, speaker)` — utter + createNode (sugar).
-- `restate(nodeId, text, speaker)` — utter + ground (the everyday motion).
+- `assert(text, proposition, state, speaker, weight=1)` — utter + createNode.
+- `restate(nodeId, text, speaker, weight=1)` — utter + ground (everyday motion).
 - `nodes() → NodeView[]` — FOLD the event log into current views.
 - `recall(query) → RecallHit[]` — nodes matching proposition, each with the
   rope (originating utterances) walked DOWN, sorted by strength.
 
+# Strength is WEIGHTED (decision, this session)
+
+Strength = **SUM of the weights** of every distinct grounding utterance, not
+a flat count. Each `created`/`grounded` event carries a `weight` (default
+1.0). With all weights 1.0, strength == distinct-utterance count (backward
+compatible — that's why no event-log migration was needed; the slot was
+added before there was data). Proven in replay: a node reads strength 2.3
+(1.0 origin + 1.0 restate + 0.3 low-conviction echo).
+
+**The FORMULA that sets weight is a deferred UNKNOWN** (a first-class open
+question, like resolution + symbiosis). Candidates: speaker weight (who said
+it × relatedness — the symbiosis axis), conviction weight (how firmly + how
+independent the paraphrase — the accretion axis), or both multiplied.
+Founder chose "store the weight, defer the formula" — body before formula.
+This came from the OLD Truth-timeline- repo's "Design node weights" PR: the
+founder's past self already wanted weighted truth; this captures the instinct
+with discipline under it. See [[core_the_law]].
+
 # Invariants (do not break)
 
 1. **Events are the source of truth.** NodeView is always derived by folding,
-   never stored. Strength = count of DISTINCT grounding utterances.
+   never stored. Strength = SUM of DISTINCT grounding utterances' weights.
 2. **Append-only.** No event is edited or deleted. State changes append; the
    prior state stays recoverable. The rope is never cut.
 3. **Distinct-utterance counting.** Re-grounding the same utterance does NOT
-   raise strength (duplicate ≠ convergent grounding).
+   raise strength (duplicate ≠ convergent grounding), regardless of weight.
 4. **Domain-blind.** No engine file contains a domain word. Domain lives only
    in callers/seed data. (Inherited Heron no-hardcode discipline.)
 5. **Store is a seam.** Engine never imports a DB client. New stores
