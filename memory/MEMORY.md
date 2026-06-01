@@ -1,0 +1,9 @@
+# Orenda — Memory Index
+
+The grounding for the next session that opens Orenda. One line per memory.
+
+- **[What Orenda is — read FIRST](core_what_orenda_is.md)** — a visual representation of truth; the visible BODY for a Claude agent you talk to all day (voice, phone, laptop, trail). Agent = voice, Orenda = body. A tool for BOTH human (sees it) and agent (traverses it to recall). Separate product from Heron; shares the engine PRINCIPLE, none of the code. Build the coworker lens first.
+- **[The Law — the moat](core_the_law.md)** — the rope is never cut (append-only, walk any node down to its origin); every node is a PROPOSITION resolving TRUE/FALSE/UNKNOWN; UNKNOWN is first-class (the seat of conversation, not a gap); three forces in tension — accretion (reinforcing), resolution (balancing), symbiosis (reinforcing). Resolution + symbiosis policies DEFERRED.
+- **[The Ladder — the Consolidation Engine](core_the_ladder.md)** — six operations (utter/ground/record/define/derive/resolve); meaning is DERIVED not stored; billion-to-ten compression; bidirectional so it's a LANGUAGE not a ladder. Orenda builds the RAW bottom of the ladder that Heron's fields/attributes consolidate at the top.
+- **[Build Order — body before skin](project_build_order.md)** — inch 1 (engine + replay proof) DONE and ticking. Decisions locked (Desktop location, monorepo, store-as-seam, manual resolution, biofabric deferred). Next inches: skin → live agent → real store/sync → voice → symbiosis. gh not installed; first commit is local.
+- **[Engine Shape](reference_engine_shape.md)** — concrete files/API/invariants of packages/engine so the next session extends instead of rebuilds.

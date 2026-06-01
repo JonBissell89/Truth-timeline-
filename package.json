@@ -1,0 +1,19 @@
+{
+  "name": "orenda",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "replay": "tsx scripts/replay.ts",
+    "typecheck": "tsc --noEmit -p packages/engine/tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
