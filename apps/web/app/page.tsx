@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { consolidate } from '@/lib/orenda/consolidator'
-import TruthMap from '@/components/truth-map'
+import { SupabasePool } from '@/lib/orenda/supabase-pool'
+import ClimbMap from '@/components/climb-map'
 
 // The home surface: the one cross-project truth map. Server component —
 // reads the logged-in user's consolidated map (RLS-scoped) and hands it to
@@ -31,7 +31,8 @@ export default async function Home({
 
   if (!user) redirect('/login')
 
-  const map = await consolidate(supabase, user.id)
+  const pool = new SupabasePool(supabase)
+  const rows = await pool.all()
 
-  return <TruthMap map={map} email={user.email ?? ''} />
+  return <ClimbMap rows={rows} email={user.email ?? ''} />
 }
