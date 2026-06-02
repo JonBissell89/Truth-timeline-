@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import type { PatternRow } from '@/lib/orenda/supabase-pool'
 import { SupabasePool } from '@/lib/orenda/supabase-pool'
+import { measureEntropy, type EntropyReading } from '@/lib/orenda/entropy'
 
 // The climb diagram. The pattern model rendered as the fractal it is:
 // surface phrases (leaves) rise through patterns toward deep shared soil
@@ -31,7 +32,9 @@ interface Placed {
 export default function ClimbMap({ rows, email }: { rows: PatternRow[]; email: string }) {
   const placed = useMemo(() => layout(rows), [rows])
   const byId = useMemo(() => new Map(rows.map((r) => [r.id, r])), [rows])
+  const entropy = useMemo(() => measureEntropy(rows), [rows])
   const [selected, setSelected] = useState<string | null>(null)
+  const [meterOpen, setMeterOpen] = useState(false)
 
   // the climb UP from a node — its legibility rope (self → deepest pattern)
   const climbOf = (id: string): PatternRow[] => {
@@ -61,10 +64,18 @@ export default function ClimbMap({ rows, email }: { rows: PatternRow[]; email: s
           </span>
         </div>
         <div className="flex items-center gap-4 text-xs text-ink-500">
+          <button
+            onClick={() => setMeterOpen((v) => !v)}
+            className={meterOpen ? 'text-amber' : 'text-ink-300 hover:text-amber'}
+          >
+            entropy
+          </button>
           <span>{email}</span>
           <button onClick={signOut} className="text-ink-300 hover:text-amber">sign out</button>
         </div>
       </header>
+
+      {meterOpen && <EntropyMeter reading={entropy} />}
 
       {rows.filter((r) => !r.is_user).length === 0 ? (
         <Empty />
@@ -168,6 +179,39 @@ function Light({
         </text>
       )}
     </g>
+  )
+}
+
+// THE ENTROPY METER — the paper, rendered. Distinct-pattern count per
+// why-depth as bars. NO floor named — just the counts. Reports honestly when
+// there isn't enough data to conclude (the instrument works; the finding
+// needs population data). This is the experiment's live readout.
+function EntropyMeter({ reading }: { reading: EntropyReading }) {
+  const max = Math.max(1, ...reading.levels.map((l) => l.distinct))
+  return (
+    <aside className="absolute left-1/2 top-20 z-20 w-[28rem] -translate-x-1/2 rounded-lg border border-space-3 bg-space-1/95 p-5 backdrop-blur">
+      <div className="mb-1 text-xs uppercase tracking-wider text-ink-500">the experiment</div>
+      <h2 className="mb-4 text-sm font-light text-ink-100">
+        Does entropy decrease as we climb?
+      </h2>
+      <div className="space-y-2">
+        {reading.levels.map((l) => (
+          <div key={l.depth} className="flex items-center gap-3">
+            <span className="w-12 shrink-0 text-right text-xs text-ink-500">why×{l.depth}</span>
+            <div className="h-3 flex-1 overflow-hidden rounded bg-space-0">
+              <div
+                className="h-full rounded bg-unknown/70"
+                style={{ width: `${(l.distinct / max) * 100}%` }}
+              />
+            </div>
+            <span className="w-6 text-xs text-ink-300">{l.distinct}</span>
+          </div>
+        ))}
+      </div>
+      <p className={`mt-4 text-xs ${reading.enough ? 'text-amber' : 'text-ink-500'}`}>
+        {reading.verdict}
+      </p>
+    </aside>
   )
 }
 
