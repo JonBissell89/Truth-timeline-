@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { PatternRow } from '@/lib/orenda/supabase-pool'
 import { SupabasePool } from '@/lib/orenda/supabase-pool'
 
@@ -31,6 +31,19 @@ interface Placed {
 export default function ClimbMap({ rows, email }: { rows: PatternRow[]; email: string }) {
   const placed = useMemo(() => layout(rows), [rows])
   const byId = useMemo(() => new Map(rows.map((r) => [r.id, r])), [rows])
+  const [selected, setSelected] = useState<string | null>(null)
+
+  // the climb UP from a node — its legibility rope (self → deepest pattern)
+  const climbOf = (id: string): PatternRow[] => {
+    const chain: PatternRow[] = []
+    let cur = byId.get(id)
+    const seen = new Set<string>()
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id); chain.push(cur)
+      cur = cur.expresses ? byId.get(cur.expresses) : undefined
+    }
+    return chain
+  }
 
   async function signOut() {
     const { createClient } = await import('@/lib/supabase/client')
@@ -71,23 +84,84 @@ export default function ClimbMap({ rows, email }: { rows: PatternRow[]; email: s
           })}
           {/* nodes */}
           {placed.map((p) => (
-            <Light key={p.row.id} p={p} byId={byId} />
+            <Light
+              key={p.row.id}
+              p={p}
+              byId={byId}
+              selected={selected === p.row.id}
+              onSelect={() => setSelected(selected === p.row.id ? null : p.row.id)}
+            />
           ))}
         </svg>
+      )}
+
+      {/* the AGREEMENT SURFACE — click a node, see why it's relevant, judge it */}
+      {selected && (
+        <Inspector
+          climb={climbOf(selected)}
+          strength={SupabasePool.strength(selected, rows)}
+          onClose={() => setSelected(null)}
+        />
       )}
     </main>
   )
 }
 
-function Light({ p, byId }: { p: Placed; byId: Map<string, PatternRow> }) {
+// The agreement surface: a recalled node shown WITH its legibility — the
+// climb up to its deep pattern, its strength, its state — so the human can
+// look and agree or disagree that it's relevant. Same shape the agent
+// reasons over (a Recollection): if the agent can't show why, it can't claim.
+function Inspector({
+  climb, strength, onClose,
+}: { climb: PatternRow[]; strength: number; onClose: () => void }) {
+  const node = climb[0]
+  if (!node) return null
+  return (
+    <aside className="absolute right-0 top-0 z-20 h-full w-80 border-l border-space-3 bg-space-1/95 p-6 backdrop-blur">
+      <button onClick={onClose} className="absolute right-4 top-4 text-ink-500 hover:text-ink-100">×</button>
+      <div className="mb-1 text-xs uppercase tracking-wider text-ink-500">
+        {node.state ?? 'pattern'} · strength {strength}
+      </div>
+      <h2 className="mb-6 text-lg font-light text-ink-100">{node.text}</h2>
+      <div className="mb-2 text-xs uppercase tracking-wider text-ink-500">the climb (why it&apos;s here)</div>
+      <ol className="space-y-2">
+        {climb.map((c, i) => (
+          <li key={c.id} className="text-sm" style={{ paddingLeft: i * 12 }}>
+            <span className="text-ink-500">{i === 0 ? '◦' : '↑'}</span>{' '}
+            <span className={i === climb.length - 1 ? 'text-amber' : 'text-ink-300'}>{c.text}</span>
+          </li>
+        ))}
+      </ol>
+      <p className="mt-6 text-xs text-ink-500">
+        Does this node belong here? You and the agent read the same climb — agree, or correct it.
+      </p>
+    </aside>
+  )
+}
+
+function Light({
+  p, byId, selected, onSelect,
+}: {
+  p: Placed
+  byId: Map<string, PatternRow>
+  selected: boolean
+  onSelect: () => void
+}) {
   const color = STATE_COLOR[p.row.state ?? ''] ?? 'var(--ink-300)'
   const isUnknown = p.row.state === 'UNKNOWN'
   const parent = p.row.expresses ? byId.get(p.row.expresses) : null
   return (
-    <g className={isUnknown ? 'orenda-unknown' : undefined}>
+    <g
+      className={isUnknown ? 'orenda-unknown' : undefined}
+      onClick={onSelect}
+      style={{ cursor: 'pointer' }}
+    >
       <title>{`${p.row.text}${parent ? `\n  ↑ ${parent.text}` : ''}`}</title>
+      {selected && (
+        <circle cx={p.x} cy={p.y} r={p.r + 5} fill="none" stroke="var(--amber)" strokeWidth={1.5} />
+      )}
       <circle cx={p.x} cy={p.y} r={p.r * 2.2} fill={color} opacity={0.07} />
-      <circle cx={p.x} cy={p.y} r={p.r} fill={color} opacity={0.85} />
+      <circle cx={p.x} cy={p.y} r={p.r} fill={color} opacity={selected ? 1 : 0.85} />
       {p.r > 10 && (
         <text x={p.x} y={p.y + p.r + 13} textAnchor="middle" fontSize="11" fill="var(--ink-300)">
           {truncate(p.row.text, 26)}
